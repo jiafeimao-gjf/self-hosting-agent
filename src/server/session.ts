@@ -298,16 +298,7 @@ export class ClientSession {
       summary: summarize(event),
     }));
 
-    const messages = all
-      .filter((event) => event.type === 'mail.message')
-      .slice(-30)
-      .map((event) => ({
-        from: String(event.from ?? ''),
-        to: String(event.to ?? ''),
-        kind: String(event.kind ?? ''),
-        body: String(event.body ?? ''),
-        ts: event.ts,
-      }));
+    const messages = this.#conversationMessages();
 
     const listedSources = this.runner.clientSource?.list();
     const sources = listedSources?.ok === true ? listedSources.value : [];
@@ -331,6 +322,39 @@ export class ClientSession {
    */
   conversation(): ContextItem[] {
     return projectConversation(this.runner.agentEvents('lead'));
+  }
+
+  /**
+   * 对话流投影：**人类消息 + Agent 说过的话**，按时间戳归并。
+   *
+   * 早先只投影邮件类消息（人类→Lead、Agent 间投递），于是前端那个
+   * 「整体重建对话流」的渲染一旦跑起来，就会把 Agent 的回复冲掉——
+   * 人类消息因为恰好在邮件日志里才活了下来。两边同源才是对的。
+   */
+  #conversationMessages(limit = 40): ClientState['messages'] {
+    const host = this.runner.log
+      .read()
+      .filter((event) => event.type === 'mail.message')
+      .map((event) => ({
+        from: String(event.from ?? ''),
+        to: String(event.to ?? ''),
+        kind: String(event.kind ?? ''),
+        body: String(event.body ?? ''),
+        ts: event.ts,
+      }));
+
+    const spoken = this.runner
+      .agentEvents('lead')
+      .filter((event) => event.type === 'agent.thinking')
+      .map((event) => ({
+        from: 'lead',
+        to: 'human',
+        kind: 'assistant',
+        body: String(event.text ?? ''),
+        ts: event.ts,
+      }));
+
+    return [...host, ...spoken].sort((a, b) => a.ts.localeCompare(b.ts)).slice(-limit);
   }
 
   documentPayload(): ClientState['document'] {

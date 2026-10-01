@@ -389,3 +389,24 @@ test('对话流：人类靠右、thinking 靠左、工具调用是可读摘要�
   assert.equal(app.renderTaskRow({ id: payload, subject: payload, status: 'x', owner: payload }).includes('<img src=x'), false);
   assert.equal(app.renderTimelineItem({ type: payload, agent: payload, ts: '' }).includes('<img src=x'), false);
 });
+
+// @spec UI-010
+test('忙碌指示：Agent 干活时有可见反馈并显示已等待秒数，收工时收掉', () => {
+  // 标记必须存在（真模型一轮可能几十秒，没有它人类会以为卡死）
+  assert.match(indexHtml, /id="busy"/);
+  assert.match(indexHtml, /id="busy-text"/);
+  assert.match(styleCss, /\.busy-dot/);
+  assert.match(styleCss, /@keyframes busy-pulse/);
+
+  // 用服务端的 busySince 算「已等 N 秒」，而不是只放一个静态图标
+  assert.match(appJs, /busySince/);
+  assert.match(appJs, /setInterval\(paint, 1000\)/);
+  assert.match(appJs, /已 \$\{seconds\}s/);
+
+  // 一轮结束必须收掉，不等下一次 state
+  assert.match(appJs, /setBusy\(\{ busy: false \}\)/);
+  assert.match(appJs, /dom\.busy\.hidden = true/);
+
+  // 连接字符串也不许出现远程资源（离线单页）
+  assert.equal(/https?:\/\//.test(styleCss), false);
+});

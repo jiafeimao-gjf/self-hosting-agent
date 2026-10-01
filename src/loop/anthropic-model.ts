@@ -188,7 +188,15 @@ interface AnthropicToolResultBlock {
   content: string;
 }
 
-type AnthropicBlock = AnthropicTextBlock | AnthropicToolResultBlock;
+/** 助手回传的工具调用块：tool_result 必须能对应到它 */
+interface AnthropicToolUseBlock {
+  type: 'tool_use';
+  id: string;
+  name: string;
+  input: Record<string, unknown>;
+}
+
+type AnthropicBlock = AnthropicTextBlock | AnthropicToolResultBlock | AnthropicToolUseBlock;
 
 interface AnthropicMessage {
   role: 'user' | 'assistant';
@@ -239,7 +247,19 @@ function toMessages(context: ContextItem[]): { system: string | undefined; messa
       continue;
     }
     if (item.role === 'assistant') {
-      push('assistant', { type: 'text', text: item.text });
+      if (item.text !== '') push('assistant', { type: 'text', text: item.text });
+      // 助手发起过的工具调用必须还原成 tool_use 块：Anthropic 会校验每个 tool_result
+      // 都必须对应前一条消息里的 tool_use，缺了就 400
+      for (const call of item.toolCalls ?? []) {
+        push('assistant', {
+          type: 'tool_use',
+          id: call.id,
+          name: call.name,
+          input: call.args ?? {},
+        });
+      }
+      // 既没文本也没工具调用的助手消息没有信息量，不占一个 user/assistant 交替位
+      if (item.text === '' && (item.toolCalls ?? []).length === 0) continue;
       continue;
     }
 

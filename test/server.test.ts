@@ -287,6 +287,30 @@ test('模型不可用时客户端收到可读的错误帧，服务本身不崩',
   );
 });
 
+// @spec CLI-012
+test('对话投影同时包含人类消息与 Agent 说过的话（只投影邮件会冲掉回复）', async () => {
+  await withServer(
+    { lead: { script: [{ text: '我收到了，这就去办', done: true }] } },
+    async ({ session, server, sse }) => {
+      await postJson(`${server.url}/api/message`, { text: '帮我看下预算' });
+      await sse.waitFor((event) => event.event === 'done');
+
+      const deadline = Date.now() + 10000;
+      while (Date.now() < deadline && !session.state().messages.some((item) => item.kind === 'assistant')) {
+        await sleep(50);
+      }
+
+      const messages = session.state().messages;
+      const humanAt = messages.findIndex((item) => item.kind === 'human' && item.body === '帮我看下预算');
+      const agentAt = messages.findIndex((item) => item.kind === 'assistant' && item.body.includes('这就去办'));
+
+      assert.equal(humanAt >= 0, true, '人类消息要在投影里');
+      assert.equal(agentAt >= 0, true, 'Agent 的回复也要在投影里——前端整体重建才不会把回复冲掉');
+      assert.ok(humanAt < agentAt, '顺序应当是人类先说、Agent 后答');
+    },
+  );
+});
+
 // @spec CLI-011
 test('POST /api/client/revert 让人类不经过 Agent 就能回滚客户端源码', async () => {
   const clientRoot = tempDir('client-src');

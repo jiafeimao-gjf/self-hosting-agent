@@ -261,6 +261,41 @@ body {
   gap: 10px;
 }
 
+/* 忙碌指示：真模型一轮可能几十秒，没有它人类会以为卡死 */
+.busy {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 14px;
+  font-size: 12.5px;
+  color: var(--text-muted);
+  border-top: 1px dashed var(--border);
+}
+
+.busy[hidden] {
+  display: none;
+}
+
+.busy-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--cyan);
+  animation: busy-pulse 1.2s ease-in-out infinite;
+}
+
+@keyframes busy-pulse {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.8);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
 .msg {
   max-width: 88%;
   padding: 8px 12px;

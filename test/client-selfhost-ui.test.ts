@@ -143,8 +143,14 @@ test('JS / HTML 变更显示横幅，刷新按钮只由人类点击触发，绝�
   );
   assert.equal(appJs.includes('location.reload'), false);
   assert.equal(appJs.includes('location.href ='), false);
+
+  // 要禁的是「自动刷新」，不是「任何定时器」：刷新不得被任何定时器调度。
   assert.equal(/setTimeout\([^)]*assign/.test(appJs), false, '刷新不得被自动调度');
-  assert.equal(/setInterval/.test(appJs), false);
+  assert.equal(/setInterval\([^)]*assign/.test(appJs), false, '刷新不得被自动调度');
+
+  // 定时器只允许忙碌态秒数跳动那一个（UI-010），多一个都得先解释清楚。
+  const intervals = appJs.match(/setInterval\([^)]*\)/g) ?? [];
+  assert.deepEqual(intervals, ['setInterval(paint, 1000)'], '只允许忙碌态计时器');
 });
 
 // @spec UI2-004

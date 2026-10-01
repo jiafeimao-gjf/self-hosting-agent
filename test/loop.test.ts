@@ -416,6 +416,44 @@ test('没有宿主桥时调用宿主工具 → NO_HOST_BRIDGE，Loop 不崩', as
   assert.match(String(failure?.error), /NO_HOST_BRIDGE/);
 });
 
+// @spec LOOP-016
+test('助手消息必须携带工具调用：下一步的工具结果才有归属', async () => {
+  const seen: ContextItem[][] = [];
+  const model = {
+    async step(input: ModelInput): Promise<ModelOutput> {
+      seen.push(input.context);
+      if (seen.length === 1) {
+        return { text: '我去查一下', toolCalls: [{ id: 'c1', name: 'echo', args: { q: 1 } }] };
+      }
+      return { done: true };
+    },
+  };
+
+  const loop = new AgentLoop({
+    agentId: 'lead',
+    model,
+    tools: [defineTool('echo', async () => 'ok')],
+    log: tempLog(),
+    sink: collector().sink,
+  });
+  await loop.run({ seed: '开始' });
+
+  const second = seen[1] ?? [];
+  const assistant = second.find((item) => item.role === 'assistant');
+  assert.ok(assistant, '上下文里必须有助手消息');
+  assert.deepEqual(
+    assistant?.toolCalls?.map((call) => call.id),
+    ['c1'],
+    '助手消息丢了 toolCalls，后面的 tool 结果就成了孤儿（严格端点直接 400）',
+  );
+  assert.equal(assistant?.text, '我去查一下', '文本与工具调用要落在同一条助手消息里');
+
+  // 工具结果必须排在这条助手消息之后
+  const assistantIndex = second.indexOf(assistant);
+  const toolIndex = second.findIndex((item) => item.role === 'tool');
+  assert.ok(toolIndex > assistantIndex, '工具结果必须跟在发起它的助手消息后面');
+});
+
 // @spec LOOP-015
 test('seedContext 把历史上下文喂进模型输入，且不重复本轮消息', async () => {
   const seen: ContextItem[][] = [];

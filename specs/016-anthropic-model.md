@@ -114,3 +114,4 @@ createAnthropicModel(options: AnthropicModelOptions): ModelPort
 - **ANTH-010** `usage.input_tokens + usage.output_tokens` → `usage.tokens`（无 usage 时不产生该字段）；终止约定：有待办动作 → `done: false`，纯文本 → `done: true`，两者皆无 → `done` 为 `undefined`。
 - **ANTH-011** 响应不可信（响应体不是 JSON、缺少 `content` 数组、`tool_use` 缺少 `name`、`tool_use.input` 不是对象）时抛 `AnthropicModelError`（`kind: 'bad_response'`）；非 2xx 抛 `AnthropicModelError`（`kind: 'http'`）并携带 `status` 与截断后的响应片段 `bodySnippet`。
 - **ANTH-012** 超过 `timeoutMs` 时用 `AbortController` 中止请求并抛 `AnthropicModelTimeoutError`（含 `timeoutMs`，不重试）；429、5xx 与网络错误按 `maxRetries` 以 `retryBaseDelayMs * 2^n` 退避重试，用尽后抛出最后一次错误；非 429 的 4xx 不重试。
+- **ANTH-013** 助手消息带 `toolCalls` 时输出 `tool_use` 内容块（`input` 为对象），与文本块同处一条 assistant 消息，使后续 `tool_result` 的 `tool_use_id` 有对应项。

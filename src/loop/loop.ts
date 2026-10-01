@@ -13,6 +13,14 @@ export interface ContextItem {
   role: ContextRole;
   text: string;
   meta?: Record<string, unknown>;
+  /**
+   * 助手消息携带的工具调用。
+   *
+   * 这不是可选项：OpenAI 要求 `role:'tool'` 必须紧跟在带 `tool_calls` 的助手消息之后，
+   * Anthropic 要求 `tool_result` 必须对应前一条消息里的 `tool_use`。
+   * 助手消息丢了 toolCalls，工具结果就成了孤儿，严格端点会直接 400。
+   */
+  toolCalls?: ToolCall[];
 }
 
 export interface ToolCall {
@@ -266,10 +274,18 @@ export class AgentLoop {
         emit({ t: 'loop.error', agent: agentId, message, ...(err instanceof Error && err.stack ? { stack: err.stack } : {}) });
         return finish('error', message);
       }
-      if (output.text !== undefined && output.text !== '') {
-        record({ type: 'agent.thinking', agent: agentId, turn, text: output.text });
-        emit({ t: 'agent.thinking', agent: agentId, text: output.text });
-        baseContext.push({ role: 'assistant', text: output.text });
+      const pendingToolCalls = output.toolCalls ?? [];
+      if ((output.text !== undefined && output.text !== '') || pendingToolCalls.length > 0) {
+        if (output.text !== undefined && output.text !== '') {
+          record({ type: 'agent.thinking', agent: agentId, turn, text: output.text });
+          emit({ t: 'agent.thinking', agent: agentId, text: output.text });
+        }
+        // 助手消息必须把它发起的工具调用一起存下来，下一步的工具结果才有归属
+        baseContext.push({
+          role: 'assistant',
+          text: output.text ?? '',
+          ...(pendingToolCalls.length === 0 ? {} : { toolCalls: pendingToolCalls }),
+        });
       }
       tokens += output.usage?.tokens ?? 0;
       step(turn, 2, LOOP_STEPS[1]);

@@ -115,3 +115,4 @@ createHttpModel(options: HttpModelOptions): ModelPort
 - **MODEL-015** 429、5xx 与网络错误按 `maxRetries` 退避重试（默认 2 次、总尝试 3 次），用尽后抛出最后一次的错误。
 - **MODEL-016** 非 429 的 4xx 不重试：只发一次请求即抛错。
 - **MODEL-017** 响应结构不可信（响应体不是 JSON、缺少 `choices[0]`、工具调用缺少 `function.name`）时抛 `HttpModelError`（`kind: 'bad_response'`）。
+- **MODEL-018** 助手消息带 `toolCalls` 时输出 `tool_calls`（`arguments` 为 JSON 串），使后续 `role:'tool'` 消息的 `tool_call_id` 有对应项——否则严格端点直接 400。

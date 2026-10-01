@@ -494,3 +494,33 @@ test('响应结构不可信（非 JSON / 缺 choices / 工具调用缺 name）�
     await server.close();
   }
 });
+
+// @spec MODEL-018
+test('助手消息带 toolCalls 时输出 tool_calls，后面的工具结果才对得上 id', async () => {
+  const server = await startFakeServer(() => ({ json: completion({ content: '收到' }) }));
+  try {
+    const model = createHttpModel(baseOptions(server));
+    await model.step(
+      input([
+        { role: 'human', text: '查一下预算' },
+        { role: 'assistant', text: '我去查', toolCalls: [{ id: 'c1', name: 'budget', args: { range: 'today' } }] },
+        { role: 'tool', text: '[budget] {"used":620000}', meta: { id: 'c1', ok: true } },
+      ]),
+    );
+
+    const messages = server.requests[0]?.body.messages as Array<Record<string, unknown>>;
+    const assistant = messages.find((item) => item.role === 'assistant');
+    assert.deepEqual(assistant?.tool_calls, [
+      { id: 'c1', type: 'function', function: { name: 'budget', arguments: JSON.stringify({ range: 'today' }) } },
+    ]);
+    assert.equal(assistant?.content, '我去查', '文本与 tool_calls 落在同一条助手消息里');
+
+    // 关键：工具结果的 tool_call_id 必须能对应上前一条助手消息里的 tool_calls
+    const tool = messages.find((item) => item.role === 'tool');
+    assert.equal(tool?.tool_call_id, 'c1');
+    const ids = (assistant?.tool_calls as Array<{ id: string }>).map((call) => call.id);
+    assert.equal(ids.includes(String(tool?.tool_call_id)), true, '不允许出现孤儿工具结果');
+  } finally {
+    await server.close();
+  }
+});

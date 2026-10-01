@@ -478,3 +478,41 @@ test('超时用 AbortController 中止且不重试；429/5xx/网络错误退避�
   );
   assert.equal(attempts, 2);
 });
+
+// @spec ANTH-013
+test('助手消息带 toolCalls 时输出 tool_use 块，tool_result 与之配对', async () => {
+  const server = await startFakeServer(() => ({ json: message([{ type: 'text', text: '收到' }]) }));
+  try {
+    const model = createAnthropicModel(baseOptions(server));
+    await model.step(
+      input([
+        { role: 'human', text: '查一下预算' },
+        { role: 'assistant', text: '我去查', toolCalls: [{ id: 'toolu_1', name: 'budget', args: { range: 'today' } }] },
+        { role: 'tool', text: '{"used":620000}', meta: { id: 'toolu_1' } },
+      ]),
+    );
+
+    const messages = server.requests[0]?.body.messages as Array<Record<string, unknown>>;
+    const assistant = messages.find((item) => item.role === 'assistant');
+    const blocks = (assistant?.content ?? []) as Array<Record<string, unknown>>;
+    assert.deepEqual(
+      blocks.map((block) => block.type),
+      ['text', 'tool_use'],
+      '文本与工具调用落在同一条助手消息的两个块里',
+    );
+
+    const use = blocks.find((block) => block.type === 'tool_use');
+    assert.equal(use?.id, 'toolu_1');
+    assert.equal(use?.name, 'budget');
+    assert.deepEqual(use?.input, { range: 'today' });
+
+    // 关键：tool_result 的 tool_use_id 必须对应上一条助手消息里的 tool_use
+    const toolResult = messages
+      .filter((item) => item.role === 'user')
+      .flatMap((item) => (item.content ?? []) as Array<Record<string, unknown>>)
+      .find((block) => block.type === 'tool_result');
+    assert.equal(toolResult?.tool_use_id, 'toolu_1', '不允许出现孤儿 tool_result（Anthropic 会 400）');
+  } finally {
+    await server.close();
+  }
+});

@@ -16,6 +16,7 @@
 | **ANTH-010** | specs/016-anthropic-model.md | `usage.input_tokens + usage.output_tokens` → `usage.tokens`（无 usage 时不产生该字段）；终止约定：有待办动作 → `done: false`，纯文本 → `done: true`，两者皆无 → `done` 为 `undefined`。 | `test/anthropic-model.test.ts` · usage 的 input_tokens + output_tokens 合成 tokens；终止约定按待办动作与文本判定 |
 | **ANTH-011** | specs/016-anthropic-model.md | 响应不可信（响应体不是 JSON、缺少 `content` 数组、`tool_use` 缺少 `name`、`tool_use.input` 不是对象）时抛 `AnthropicModelError`（`kind: 'bad_response'`）；非 2xx 抛 `AnthropicModelError`（`kind: 'http'`）并携带 `status` 与截断后的响应片段 `bodySnippet`。 | `test/anthropic-model.test.ts` · 响应不可信抛 bad_response；非 2xx 抛带 status 与响应片段的 http 错误 |
 | **ANTH-012** | specs/016-anthropic-model.md | 超过 `timeoutMs` 时用 `AbortController` 中止请求并抛 `AnthropicModelTimeoutError`（含 `timeoutMs`，不重试）；429、5xx 与网络错误按 `maxRetries` 以 `retryBaseDelayMs * 2^n` 退避重试，用尽后抛出最后一次错误；非 429 的 4xx 不重试。 | `test/anthropic-model.test.ts` · 超时用 AbortController 中止且不重试；429/5xx/网络错误退避重试；非 429 的 4xx 不重试 |
+| **ANTH-013** | specs/016-anthropic-model.md | 助手消息带 `toolCalls` 时输出 `tool_use` 内容块（`input` 为对象），与文本块同处一条 assistant 消息，使后续 `tool_result` 的 `tool_use_id` 有对应项。 | `test/anthropic-model.test.ts` · 助手消息带 toolCalls 时输出 tool_use 块，tool_result 与之配对 |
 | **ARCH-001** | specs/000-architecture.md | 四层目录 `src/surface`、`src/protocol`、`src/runtime`、`src/kernel` 必须存在且各自可被独立导入。 | `test/architecture.test.ts` · 四层目录齐备，且每层都能被独立导入 |
 | **ARCH-002** | specs/000-architecture.md | 依赖方向：`src/protocol` 不 import 任何其它层；`src/surface` 不 import kernel/runtime/loop；`src/loop` 不 import kernel。 | `test/architecture.test.ts` · 依赖方向：协议层最底层，界面层拿不到系统权限，Loop 不能反向控制内核 |
 | **ARCH-003** | specs/000-architecture.md | 架构中的「一个 Agent 一个子进程」必须可被观测：Kernel 拉起的 Agent 有独立 pid，且 pid 与宿主不同。 | `test/kernel.test.ts` · spawn 拉起独立子进程：pid 与宿主不同，能读到子进程发出的帧 |
@@ -32,12 +33,14 @@
 | **CLI-009** | specs/011-client.md | 模型不可用时（HTTP 端口报错）客户端收到可读的错误帧，服务本身不崩。 | `test/server.test.ts` · 模型不可用时客户端收到可读的错误帧，服务本身不崩 |
 | **CLI-010** | specs/011-client.md | 服务端可以只监听 127.0.0.1（默认），不对外暴露。 | `test/server.test.ts` · 默认只监听 127.0.0.1，不对外暴露 |
 | **CLI-011** | specs/011-client.md | `POST /api/client/revert` 让人类**不必经过 Agent** 就能把被改过的客户端源码回滚（架构底线：人类永远能一键回滚）。 | `test/server.test.ts` · POST /api/client/revert 让人类不经过 Agent 就能回滚客户端源码 |
+| **CLI-012** | specs/011-client.md | `/api/state` 的 `messages` 是**完整对话投影**（人类消息 + Agent 说过的话，按时间归并）。前端会据此整体重建对话流，只投影邮件类消息会把 Agent 的回复冲掉。 | `test/server.test.ts` · 对话投影同时包含人类消息与 Agent 说过的话（只投影邮件会冲掉回复） |
 | **E2E-001** | specs/007-e2e.md | 端到端成立：Kernel 拉起 Loop 子进程，`human.message` 进去后，宿主能收到 `ui.patch`，界面文档产生新版本，并能渲染出含该面板的 HTML。 | `test/e2e.test.ts` · 端到端：子进程跑完 Loop → ui.patch → 界面文档出新版本并渲染出 HTML |
 | **E2E-002** | specs/007-e2e.md | 非法 View Spec 被 `SurfaceIngest` 拒绝：不进入界面文档（版本不前进）、留下 rejected 记录，且**界面依然可用**。 | `test/e2e.test.ts` · 非法 View Spec 被拒绝：版本不前进、有留痕、界面依然可用 |
 | **E2E-003** | specs/007-e2e.md | 回滚：连续应用多次 patch 后可回到任意历史版本，渲染结果随之回退（架构里的「可回滚的改造权」）。 | `test/e2e.test.ts` · 回滚：多次改造后可回到任意版本，渲染结果随之回退 |
 | **E2E-004** | specs/007-e2e.md | CLI 可独立跑通：`node src/cli.ts demo` 作为真实进程执行到底，退出码为 0，并落盘 `surface.html` 与 `surface.json`。 | `test/e2e.test.ts` · CLI demo 作为真实进程跑通并落盘产物 |
 | **E2E-005** | specs/007-e2e.md | 局部补丁：`op='patch'` 的局部字段补丁能穿过入口闸门落到界面文档（深合并、其余字段保留）；合并后非法的补丁整笔作废、版本不前进。三种粒度在端到端链路上都成立。 | `test/e2e.test.ts` · 局部补丁：op=patch 能穿过入口闸门做深合并；合并后非法则整笔作废 |
 | **E2E-006** | specs/007-e2e.md | P1 编排链路可一键复现：`node src/cli.ts team` 作为真实进程跑通「Lead 建任务 → 拉起队友 → 队友领活干完 → 回报 → Lead 改界面」，退出码 0，并落盘编排产物 HTML。 | `test/e2e.test.ts` · CLI team 命令跑通一次真实的多进程编排并落盘产物 |
+| **E2E-007** | specs/007-e2e.md | 多轮工具调用不被严格端点拒绝：用一个「看到孤儿工具结果就 400」的假服务驱动真实子进程，断言两轮工具往返能跑完且零违规（本机宽容的模型掩盖过这个问题）。 | `test/e2e.test.ts` · 多轮工具调用不被严格端点拒绝：工具结果必须能对应上助手声明的工具调用 |
 | **HOST-001** | specs/010-orchestration.md | `agent.spawn` 拉起独立子进程：返回的 pid 与调用者不同，且 brief 已投递给它。 | `test/orchestration.test.ts` · agent.spawn 拉起独立子进程，并把 brief 投递给它 |
 | **HOST-002** | specs/010-orchestration.md | `agent.spawn` 过审批门：未获放行时返回 `ok:false`，不拉起任何进程。 | `test/orchestration.test.ts` · agent.spawn 过审批门：默认拒绝时不拉起任何进程 |
 | **HOST-003** | specs/010-orchestration.md | `agent.send` 先落盘再投递；目标不在世时消息留在邮箱，之后上线能取到。 | `test/orchestration.test.ts` · agent.send 先落盘再投递；目标不在世时消息留在邮箱 |
@@ -79,6 +82,7 @@
 | **LOOP-013** | specs/003-agent-loop.md | 宿主工具失败不致命：超时、被中断、回填 `ok:false` 都只产生 `tool.result{ok:false}`，Loop 继续到下一轮。 | `test/loop.test.ts` · 宿主工具失败不致命：超时/中断/回填失败都只变成 ok:false，Loop 继续 |
 | **LOOP-014** | specs/003-agent-loop.md | 没有接到宿主桥时调用宿主工具 → `tool.result{ok:false}` 且错误信息含 `NO_HOST_BRIDGE`，Loop 不崩。 | `test/loop.test.ts` · 没有宿主桥时调用宿主工具 → NO_HOST_BRIDGE，Loop 不崩 |
 | **LOOP-015** | specs/003-agent-loop.md | `seedContext` 提供的历史上下文会进入模型输入（顺序：system → 历史 → 本轮 seed），且本轮消息不会重复注入。 | `test/loop.test.ts` · seedContext 把历史上下文喂进模型输入，且不重复本轮消息 |
+| **LOOP-016** | specs/003-agent-loop.md | 助手消息必须携带它发起的工具调用（`ContextItem.toolCalls`），且工具结果排在其后。少了这一条，工具结果在严格端点上就是孤儿：OpenAI 要求 `role:'tool'` 紧跟带 `tool_calls` 的助手消息，Anthropic 要求 `tool_result` 对应前一条的 `tool_use`。 | `test/loop.test.ts` · 助手消息必须携带工具调用：下一步的工具结果才有归属 |
 | **MAIL-001** | specs/005-taskboard-mailbox.md | `send` 写入字段完整的消息，收件 Agent 可用 `pending` 读到。 | `test/mailbox.test.ts` · send 写入字段完整的消息，收件 Agent 可用 pending 读到 |
 | **MAIL-002** | specs/005-taskboard-mailbox.md | 重复 id 幂等：再次 `send` 不新增记录，`duplicate` 为 `true`，邮箱里只有一条。 | `test/mailbox.test.ts` · 重复 id 幂等：不新增记录，duplicate 为 true |
 | **MAIL-003** | specs/005-taskboard-mailbox.md | `pending(agentId)` 只读不消费：重复调用结果一致，不写 `deliveredAt`。 | `test/mailbox.test.ts` · pending 只读不消费，且返回快照副本 |
@@ -104,6 +108,7 @@
 | **MODEL-015** | specs/009-http-model.md | 429、5xx 与网络错误按 `maxRetries` 退避重试（默认 2 次、总尝试 3 次），用尽后抛出最后一次的错误。 | `test/http-model.test.ts` · 429/5xx/网络错误按 maxRetries 退避重试，用尽后抛最后一次错误 |
 | **MODEL-016** | specs/009-http-model.md | 非 429 的 4xx 不重试：只发一次请求即抛错。 | `test/http-model.test.ts` · 非 429 的 4xx 不重试，只发一次请求就抛错 |
 | **MODEL-017** | specs/009-http-model.md | 响应结构不可信（响应体不是 JSON、缺少 `choices[0]`、工具调用缺少 `function.name`）时抛 `HttpModelError`（`kind: 'bad_response'`）。 | `test/http-model.test.ts` · 响应结构不可信（非 JSON / 缺 choices / 工具调用缺 name）抛 bad_response |
+| **MODEL-018** | specs/009-http-model.md | 助手消息带 `toolCalls` 时输出 `tool_calls`（`arguments` 为 JSON 串），使后续 `role:'tool'` 消息的 `tool_call_id` 有对应项——否则严格端点直接 400。 | `test/http-model.test.ts` · 助手消息带 toolCalls 时输出 tool_calls，后面的工具结果才对得上 id |
 | **ORCH-001** | specs/010-orchestration.md | Lead 通过 `agent.spawn` 拉起 Teammate，两者 pid 不同，且事件日志里能还原出这次派发。 | `test/orchestration.test.ts` · Lead 通过 agent.spawn 拉起 Teammate：两者 pid 不同，日志可还原派发 |
 | **ORCH-002** | specs/010-orchestration.md | 跨进程协作闭环：Teammate 领取并完成任务 → 回报 Lead → Lead 收到后继续（上下文里能看到回报）。 | `test/orchestration.test.ts` · 跨进程协作闭环：Teammate 领任务并完成，Lead 收到回报后继续 |
 | **ORCH-003** | specs/010-orchestration.md | 子 Agent 完成时由 Kernel 自动向父 Agent 回报，`agent.wait` 因此能确定性地返回。 | `test/orchestration.test.ts` · 子 Agent 完成时由 Kernel 自动回报父 Agent，agent.wait 因此能确定性返回 |
@@ -174,6 +179,7 @@
 | **UI-007** | specs/012-client-ui.md | `app.js` 用 `EventSource('/api/stream')` 订阅并处理 `state` / `frame` / `document` / `done` 四类事件，通过 `POST` 调用 `/api/message`、`/api/interrupt`、`/api/rollback`；在 Node 中 import 无副作用，`normalizeState` 对缺字段的坏输入退化为空。 | `test/client-ui.test.ts` · app.js 订阅 /api/stream 处理四类事件，并用 POST 调 message / interrupt / rollback |
 | **UI-008** | specs/012-client-ui.md | 对话流把人类消息靠右、`agent.thinking` 靠左，工具调用渲染成「谁 · 调了什么 · ok/失败」的摘要行，时间线按事件类型上色，且所有进入 DOM 的文本都经过 `escapeHtml`。 | `test/client-ui.test.ts` · 对话流：人类靠右、thinking 靠左、工具调用是可读摘要行，所有文本都转义 |
 | **UI-009** | specs/012-client-ui.md | 首帧不会被吞：iframe 尚未完成初始加载时收到的 html 先记为待画、`load` 之后补画；`document` 事件强制重画；判定「要不要画」看的是**画没画上**而不是「内容变没变」。（真实故障：首帧赋值被 iframe 尚未完成的初始加载覆盖，缓存又认定「这份 html 画过了」，于是面板永久空白。） | `test/client-ui.test.ts` · 首帧不会被吞：没画上就必须再画，document 事件强制重画 |
+| **UI-010** | specs/012-client-ui.md | 忙碌指示：Agent 干活期间对话区有可见反馈（脉动点 + 「已等 N 秒」），`done` 时立即收掉。真模型一轮可能几十秒，没有它人类会以为卡死。 | `test/client-ui.test.ts` · 忙碌指示：Agent 干活时有可见反馈并显示已等待秒数，收工时收掉 |
 | **UI2-001** | specs/014-client-selfhost-ui.md | `app.js` 用 SSE 订阅 `client.changed`（事件名含点号），把 `write` / `revert` 两类变更归一化后追加进事件时间线，且对坏 data 不抛异常。 | `test/client-selfhost-ui.test.ts` · 订阅 client.changed：写 / 回滚都归一化，并进事件时间线 |
 | **UI2-002** | specs/014-client-selfhost-ui.md | `path` 以 `.css` 结尾时，按文件名找到对应的 `<link rel="stylesheet">` 并把 href 换成带 cache-bust 查询串（`?v=<版本>&t=<时间戳>`）的新地址；热替换不刷新页面（`app.js` 内无自动刷新路径）。 | `test/client-selfhost-ui.test.ts` · CSS 变更走无刷新热替换：按文件名定位 <link> 并加 cache-bust 查询串 |
 | **UI2-003** | specs/014-client-selfhost-ui.md | `.js` / `.html` 变更显示「刷新以生效」横幅，横幅上的刷新按钮**只有人类点击**才导航到当前地址（等价整页刷新）；`app.js` 不含 UI-006 禁止的 `location.reload` / `location.href =` 字面量，不存在自动刷新。 | `test/client-selfhost-ui.test.ts` · JS / HTML 变更显示横幅，刷新按钮只由人类点击触发，绝不自动刷新 |
@@ -191,7 +197,7 @@
 
 ## 统计
 
-- 验收标准：**184** 条
-- 已覆盖：**184** 条
+- 验收标准：**190** 条
+- 已覆盖：**190** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

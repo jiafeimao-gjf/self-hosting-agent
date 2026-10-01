@@ -430,6 +430,8 @@ function boot() {
     timeline: document.getElementById('timeline'),
     sources: document.getElementById('sources'),
     change: document.getElementById('client-change'),
+    busy: document.getElementById('busy'),
+    busyText: document.getElementById('busy-text'),
   };
 
   const state = {
@@ -443,7 +445,42 @@ function boot() {
     painted: false,
     /** 已发出但还没回填结果的 tool.call：id → { call, node } */
     tools: new Map(),
+    /** 忙碌态：真模型一轮可能几十秒，人类必须看得出「它在干活、等了多久」 */
+    busySince: null,
+    busyTimer: null,
   };
+
+  /**
+   * 渲染忙碌态。用 busySince 算「已等 N 秒」，而不是只显示一个静态的转圈——
+   * 本机小模型一轮 20~60 秒，人类需要知道它是在想还是卡死了。
+   */
+  function setBusy(raw) {
+    const record = isRecord(raw) ? raw : {};
+    const busy = record.busy === true;
+    const since = finiteNumber(record.busySince);
+
+    if (!busy) {
+      state.busySince = null;
+      if (state.busyTimer !== null) {
+        clearInterval(state.busyTimer);
+        state.busyTimer = null;
+      }
+      if (dom.busy !== null && dom.busy !== undefined) dom.busy.hidden = true;
+      return;
+    }
+
+    state.busySince = since ?? Date.now();
+    if (dom.busy === null || dom.busy === undefined) return;
+    dom.busy.hidden = false;
+
+    const paint = () => {
+      if (dom.busyText === null || dom.busyText === undefined) return;
+      const seconds = Math.max(0, Math.round((Date.now() - (state.busySince ?? Date.now())) / 1000));
+      dom.busyText.textContent = seconds < 1 ? 'Agent 正在思考…' : `Agent 正在思考…已 ${seconds}s`;
+    };
+    paint();
+    if (state.busyTimer === null) state.busyTimer = setInterval(paint, 1000);
+  }
 
   // 沙箱的首次加载完成后，把首帧期间攒下的 html 补画上（否则会被初始加载覆盖）
   dom.surface.addEventListener('load', () => {
@@ -513,8 +550,12 @@ function boot() {
     const events = snapshot.events.slice(-MAX_TIMELINE).reverse();
     dom.timeline.innerHTML = events.map(renderTimelineItem).join('');
 
+    // 对话流按服务端的「完整对话投影」整体重建：它同时包含人类消息与 Agent 说过的话。
+    // 早先这里只投影邮件类消息，于是每轮结束时会把 Agent 的回复冲掉 —— 现在两边同源。
     dom.messages.innerHTML = projectMessages(snapshot.messages).map(renderMessage).join('');
     dom.messages.scrollTop = dom.messages.scrollHeight;
+
+    setBusy(raw);
 
     // SPEC-017：/api/state 若带了生效模型信息，顶栏 chip 跟着更新（没有就不冒充）
     settingsPage.applyEffectiveModel(raw);
@@ -563,6 +604,8 @@ function boot() {
 
   function applyDone(payload) {
     const data = isRecord(payload) ? payload : {};
+    // 一轮结束就必须收掉忙碌态，不等下一次 state（否则慢网络下会一直转）
+    setBusy({ busy: false });
     const reason = textOf(data.reason);
     const text = reason === 'interrupted' ? '本轮已被人类中断' : reason.length > 0 ? `本轮结束：${reason}` : '本轮结束';
     appendMessage(renderMessage({ kind: 'done', agent: '系统', text }));

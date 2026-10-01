@@ -63,3 +63,4 @@ interface HostBridgePort {
 - **LOOP-013** 宿主工具失败不致命：超时、被中断、回填 `ok:false` 都只产生 `tool.result{ok:false}`，Loop 继续到下一轮。
 - **LOOP-014** 没有接到宿主桥时调用宿主工具 → `tool.result{ok:false}` 且错误信息含 `NO_HOST_BRIDGE`，Loop 不崩。
 - **LOOP-015** `seedContext` 提供的历史上下文会进入模型输入（顺序：system → 历史 → 本轮 seed），且本轮消息不会重复注入。
+- **LOOP-016** 助手消息必须携带它发起的工具调用（`ContextItem.toolCalls`），且工具结果排在其后。少了这一条，工具结果在严格端点上就是孤儿：OpenAI 要求 `role:'tool'` 紧跟带 `tool_calls` 的助手消息，Anthropic 要求 `tool_result` 对应前一条的 `tool_use`。

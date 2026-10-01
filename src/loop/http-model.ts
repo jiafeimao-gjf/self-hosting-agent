@@ -180,6 +180,7 @@ interface ChatMessage {
   role: 'system' | 'user' | 'assistant' | 'tool';
   content: string;
   tool_call_id?: string;
+  tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
 }
 
 function buildBody(options: HttpModelOptions, input: ModelInput): Record<string, unknown> {
@@ -206,6 +207,20 @@ function toMessages(context: ContextItem[]): ChatMessage[] {
     }
     if (item.role === 'human') return { role: 'user', content: item.text };
     if (item.role === 'system') return { role: 'system', content: item.text };
+
+    // 助手消息发起过工具调用就必须带上 tool_calls：否则后续 role:'tool' 是孤儿，
+    // OpenAI 会直接 400（messages with role 'tool' must be a response to a message with 'tool_calls'）
+    if (Array.isArray(item.toolCalls) && item.toolCalls.length > 0) {
+      return {
+        role: 'assistant',
+        content: item.text,
+        tool_calls: item.toolCalls.map((call) => ({
+          id: call.id,
+          type: 'function',
+          function: { name: call.name, arguments: JSON.stringify(call.args ?? {}) },
+        })),
+      };
+    }
     return { role: 'assistant', content: item.text };
   });
 }

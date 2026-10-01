@@ -29,6 +29,11 @@
       <section class="zone zone-chat" aria-label="对话">
         <div class="zone-head"><h2>对话</h2><span class="hint">回车发送 · Shift+回车换行</span></div>
         <ol id="messages" class="messages"></ol>
+        <!-- Agent 在干活时的唯一反馈：真模型一轮可能几十秒，不能让它静默 -->
+        <div id="busy" class="busy" hidden>
+          <span class="busy-dot"></span>
+          <span id="busy-text">Agent 正在思考…</span>
+        </div>
         <form id="composer" class="composer" autocomplete="off">
           <textarea id="input" class="input" rows="2" placeholder="跟 Agent 说点什么…" aria-label="人类输入"></textarea>
           <button id="send" class="btn btn-primary" type="submit">发送</button>

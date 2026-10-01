@@ -2,6 +2,7 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -169,4 +170,102 @@ test('CLI demo 作为真实进程跑通并落盘产物', () => {
   const spec = JSON.parse(fs.readFileSync(path.join(outDir, 'surface.json'), 'utf8')) as { version: number };
   assert.ok(spec.version >= 1);
   assert.ok(fs.existsSync(path.join(logDir, 'events.jsonl')));
+});
+
+// @spec E2E-007
+test('多轮工具调用不被严格端点拒绝：工具结果必须能对应上助手声明的工具调用', async () => {
+  interface ChatMessage {
+    role?: string;
+    tool_call_id?: string;
+    tool_calls?: Array<{ id: string }>;
+  }
+
+  let calls = 0;
+  const violations: string[] = [];
+
+  // 这个假服务模仿**严格**端点：看到没有前驱的 tool 消息就 400。
+  // OpenAI 与 Anthropic 都会这样校验，而宽容的本机模型不会 —— 这正是之前漏掉它的原因。
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk: Buffer) => {
+      body += chunk.toString('utf8');
+    });
+    req.on('end', () => {
+      calls += 1;
+      const parsed = JSON.parse(body) as { messages?: ChatMessage[] };
+      const declared = new Set<string>();
+      for (const message of parsed.messages ?? []) {
+        if (message.role === 'assistant' && Array.isArray(message.tool_calls)) {
+          for (const call of message.tool_calls) declared.add(call.id);
+        }
+        if (message.role === 'tool' && !declared.has(String(message.tool_call_id))) {
+          violations.push(`孤儿工具结果 ${String(message.tool_call_id)}`);
+        }
+      }
+
+      if (violations.length > 0) {
+        res.writeHead(400, { 'content-type': 'application/json' });
+        res.end(JSON.stringify({ error: { message: violations[0] } }));
+        return;
+      }
+
+      res.writeHead(200, { 'content-type': 'application/json' });
+      if (calls === 1) {
+        res.end(
+          JSON.stringify({
+            choices: [
+              {
+                message: {
+                  role: 'assistant',
+                  content: '我先看一下预算',
+                  tool_calls: [
+                    { id: 'call_1', type: 'function', function: { name: 'budget', arguments: '{"range":"today"}' } },
+                  ],
+                },
+              },
+            ],
+            usage: { total_tokens: 5 },
+          }),
+        );
+        return;
+      }
+      res.end(
+        JSON.stringify({ choices: [{ message: { role: 'assistant', content: '看完了' } }], usage: { total_tokens: 3 } }),
+      );
+    });
+  });
+
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+  const pool = new AgentPool();
+  try {
+    const handle = pool.spawn({
+      agentId: 'lead',
+      logDir: tempDir('strict'),
+      env: {
+        AGENT_MODEL: 'http',
+        AGENT_PROTOCOL: 'openai',
+        AGENT_BASE_URL: `http://127.0.0.1:${port}/v1`,
+        AGENT_API_KEY: 'sk-test',
+        AGENT_MODEL_NAME: 'strict-model',
+      },
+    });
+
+    const done = new Promise<Frame>((resolve) =>
+      handle.onFrame((frame: Frame) => {
+        if (frame.t === 'loop.done') resolve(frame);
+      }),
+    );
+    handle.send({ t: 'human.message', text: '看看预算' });
+
+    assert.equal(String((await done).reason), 'completed', '严格端点下也必须跑完，而不是被 400 打断');
+    assert.equal(calls, 2, '应当是「先调工具，再收尾」两轮');
+    assert.deepEqual(violations, [], '不允许把孤儿工具结果发给真实端点');
+  } finally {
+    await pool.shutdown();
+    server.close();
+    server.closeAllConnections?.();
+  }
 });

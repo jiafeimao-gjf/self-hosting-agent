@@ -8,9 +8,9 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **184** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **184 / 184** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **183** 个，全绿（约 8s，零第三方依赖） |
+| 验收标准 | **190** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **190 / 190** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **189** 个，全绿（约 8s，零第三方依赖） |
 | 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
 | P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
 | P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
