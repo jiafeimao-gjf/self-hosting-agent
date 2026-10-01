@@ -4,6 +4,18 @@
 
 | 验收标准 | 规格文件 | 说明 | 覆盖测试 |
 | --- | --- | --- | --- |
+| **ANTH-001** | specs/016-anthropic-model.md | `createAnthropicModel` 返回可用的 `ModelPort`：请求发往 `{baseUrl}/v1/messages`（`baseUrl` 尾部斜杠被归一化），带 `x-api-key`、`anthropic-version`（默认 `2023-06-01`，可覆盖）与 JSON 内容类型；请求体含 `model`，且 `max_tokens` 缺省为 `4096`。 | `test/anthropic-model.test.ts` · createAnthropicModel 把请求发到 {baseUrl}/v1/messages，带 x-api-key / anthropic-version，max_tokens 缺省为 4096 |
+| **ANTH-002** | specs/016-anthropic-model.md | `role: 'system'` 的上下文全部提到请求体顶层 `system` 字段（多条按顺序用 `\n\n` 拼接），且不出现在 `messages` 中；没有 system 项时不发送 `system` 字段。 | `test/anthropic-model.test.ts` · system 上下文合并进请求体顶层 system 字段，且不出现在 messages 里 |
+| **ANTH-003** | specs/016-anthropic-model.md | `human` 映射为 `{ role: 'user', content: [{ type: 'text', text }] }`，`assistant` 映射为 `{ role: 'assistant', content: [{ type: 'text', text }] }`。 | `test/anthropic-model.test.ts` · human/assistant 上下文映射为 text 内容块消息 |
+| **ANTH-004** | specs/016-anthropic-model.md | `peer` 映射为 `user` 的文本块，文本前缀 `[来自 <from>] `，来源取自 `meta.from`，缺失时为 `peer`；相邻 user 消息被合并为一条消息的多个文本块。 | `test/anthropic-model.test.ts` · peer 转 user 并前缀标注来源（缺失时用 peer），相邻 user 消息合并为一条 |
+| **ANTH-005** | specs/016-anthropic-model.md | `role: 'tool'` 映射为 `user` 消息的 `{ type: 'tool_result', tool_use_id: meta.id, content: text }` 块；`meta.id` 缺失时**不伪造 id**，降级为同一条 user 消息里的 `[工具结果] <text>` 文本块。 | `test/anthropic-model.test.ts` · tool 上下文映射为 user 消息的 tool_result 块；meta.id 缺失时不伪造 id 而降级为文本块 |
+| **ANTH-006** | specs/016-anthropic-model.md | 连续多条工具结果被合并进**同一条** user 消息的多个 `tool_result` 块（不产生连续多条 user 消息），满足 Anthropic 的 user/assistant 交替要求。 | `test/anthropic-model.test.ts` · 连续多条工具结果合并进同一条 user 消息的多个 tool_result 块 |
+| **ANTH-007** | specs/016-anthropic-model.md | `ToolSpec[]` 映射为 `tools[{ name, description, input_schema }]`，`input_schema` 为空对象 schema，`description` 缺失时给空串；工具为空时不发送 `tools` 字段。 | `test/anthropic-model.test.ts` · ToolSpec 映射为 tools[{name, description, input_schema}]，无工具时不发 tools 字段 |
+| **ANTH-008** | specs/016-anthropic-model.md | `maxTokens` 映射为 `max_tokens`（覆盖默认 `4096`），`temperature` 只有显式给出时才发送（`0` 也必须被发送）。 | `test/anthropic-model.test.ts` · maxTokens 映射为 max_tokens，temperature 只有显式给出才发送（0 也是有效值） |
+| **ANTH-009** | specs/016-anthropic-model.md | 响应 `content` 数组的 `text` 块按顺序用 `\n` 拼接为 `text`，未知类型块被跳过，全空时 `text` 为 `undefined`；`tool_use` 块映射为 `toolCalls`，`input` 作为对象直接使用（不 `JSON.parse`），`id` 缺失时补 `toolu_<index>`。 | `test/anthropic-model.test.ts` · 解析 content 的 text 块（按 \\n 拼接、跳过未知块）与 tool_use 块（input 已是对象，不 JSON.parse） |
+| **ANTH-010** | specs/016-anthropic-model.md | `usage.input_tokens + usage.output_tokens` → `usage.tokens`（无 usage 时不产生该字段）；终止约定：有待办动作 → `done: false`，纯文本 → `done: true`，两者皆无 → `done` 为 `undefined`。 | `test/anthropic-model.test.ts` · usage 的 input_tokens + output_tokens 合成 tokens；终止约定按待办动作与文本判定 |
+| **ANTH-011** | specs/016-anthropic-model.md | 响应不可信（响应体不是 JSON、缺少 `content` 数组、`tool_use` 缺少 `name`、`tool_use.input` 不是对象）时抛 `AnthropicModelError`（`kind: 'bad_response'`）；非 2xx 抛 `AnthropicModelError`（`kind: 'http'`）并携带 `status` 与截断后的响应片段 `bodySnippet`。 | `test/anthropic-model.test.ts` · 响应不可信抛 bad_response；非 2xx 抛带 status 与响应片段的 http 错误 |
+| **ANTH-012** | specs/016-anthropic-model.md | 超过 `timeoutMs` 时用 `AbortController` 中止请求并抛 `AnthropicModelTimeoutError`（含 `timeoutMs`，不重试）；429、5xx 与网络错误按 `maxRetries` 以 `retryBaseDelayMs * 2^n` 退避重试，用尽后抛出最后一次错误；非 429 的 4xx 不重试。 | `test/anthropic-model.test.ts` · 超时用 AbortController 中止且不重试；429/5xx/网络错误退避重试；非 429 的 4xx 不重试 |
 | **ARCH-001** | specs/000-architecture.md | 四层目录 `src/surface`、`src/protocol`、`src/runtime`、`src/kernel` 必须存在且各自可被独立导入。 | `test/architecture.test.ts` · 四层目录齐备，且每层都能被独立导入 |
 | **ARCH-002** | specs/000-architecture.md | 依赖方向：`src/protocol` 不 import 任何其它层；`src/surface` 不 import kernel/runtime/loop；`src/loop` 不 import kernel。 | `test/architecture.test.ts` · 依赖方向：协议层最底层，界面层拿不到系统权限，Loop 不能反向控制内核 |
 | **ARCH-003** | specs/000-architecture.md | 架构中的「一个 Agent 一个子进程」必须可被观测：Kernel 拉起的 Agent 有独立 pid，且 pid 与宿主不同。 | `test/kernel.test.ts` · spawn 拉起独立子进程：pid 与宿主不同，能读到子进程发出的帧 |
@@ -120,6 +132,16 @@
 | **SELF-011** | specs/013-self-hosting.md | 广播：写入成功与回滚都产生 `client.changed`；`/api/state` 的 `sources` 同步更新。 | `test/self-hosting.test.ts` · 广播：写入触发 client.changed，且 state.sources 同步更新 |
 | **SELF-012** | specs/013-self-hosting.md | 无变化写入是幂等的：内容与当前一致时不产生新版本。 | `test/self-hosting.test.ts` · 无变化写入是幂等的：不产生新版本 |
 | **SELF-013** | specs/013-self-hosting.md | `append` 模式：在文件末尾追加内容（不必先读全文），且同样走自检门禁。 | `test/self-hosting.test.ts` · append 模式在末尾追加，且同样走自检门禁 |
+| **SET-001** | specs/015-model-settings.md | 无配置时的默认值是本机 Ollama（openai 协议），且 `hasApiKey` 为 false 也能正常工作。 | `test/settings.test.ts` · 无配置时的默认值是本机 Ollama（openai 协议），且未设 Key 也能用 |
+| **SET-002** | specs/015-model-settings.md | 保存后可读回且落盘；文件权限为 0600。 | `test/settings.test.ts` · 保存后可读回并落盘，文件权限 0600 |
+| **SET-003** | specs/015-model-settings.md | `GET /api/settings` 永不返回明文 Key：只返回打码串与 `hasApiKey`。 | `test/settings.test.ts` · 永不回传明文 Key：GET /api/settings 只给打码串 |
+| **SET-004** | specs/015-model-settings.md | `PUT` 时省略或传空 `apiKey` → 保留原有 Key；传新 Key → 覆盖。 | `test/settings.test.ts` · PUT 省略或传空 apiKey → 保留原 Key；传新 Key → 覆盖 |
+| **SET-005** | specs/015-model-settings.md | 保存设置会重启 Lead 进程；重启后历史上下文仍在（由事件日志投影，不因重启断裂）。 | `test/settings.test.ts` · 保存设置会重启 Lead，历史上下文仍在（事件日志投影） |
+| **SET-006** | specs/015-model-settings.md | `POST /api/settings/test`：配置可用则返回 `{ok:true, latencyMs}`；不可用则返回 `{ok:false, error}`（可读信息，服务不崩）。 | `test/settings.test.ts` · 连接测试：通就返回延迟与回复，不通就返回可读错误 |
+| **SET-007** | specs/015-model-settings.md | 协议选择贯通到子进程：`AGENT_PROTOCOL=anthropic` 时子进程走 Anthropic 适配器（可在假服务上验证）。 | `test/settings.test.ts` · 协议贯通到子进程：AGENT_PROTOCOL=anthropic 时走 /v1/messages |
+| **SET-008** | specs/015-model-settings.md | 设置变更广播 `settings` 事件，`/api/state` 里的生效模型信息同步更新。 | `test/settings.test.ts` · 设置变更广播 settings 事件，state.model 同步更新 |
+| **SET-009** | specs/015-model-settings.md | 非法输入被拒绝：未知协议、空 `baseUrl`、空 `model` → 400 且不落盘。 | `test/settings.test.ts` · 非法输入被拒绝且不落盘 |
+| **SET-010** | specs/015-model-settings.md | 打码规则可测：长度足够的 Key 显示头尾、过短的 Key 全遮。 | `test/settings.test.ts` · 打码规则：足够长显示头尾，短的一律遮住 |
 | **SURF-001** | specs/006-surface.md | 组件表 `COMPONENT_SPECS` 是唯一真相来源：校验器、渲染器与 JSON Schema 均由它派生，新增组件只需改这一处。 | `test/surface.test.ts` · 组件表是唯一真相来源：校验 / 渲染 / schema 三处同步 |
 | **SURF-002** | specs/006-surface.md | `validateViewSpec` 接受全部已声明组件的合法 spec 并返回 `{ok:true}`，对任意输入（含 `null`、数组、标量、循环引用）永不抛异常。 | `test/surface.test.ts` · validateViewSpec 接受合法 spec，且对任意输入永不抛异常 |
 | **SURF-003** | specs/006-surface.md | 未知组件类型报 `UNKNOWN_COMPONENT`，与结构错误（`MISSING_FIELD` / `BAD_FIELD_TYPE` / `UNKNOWN_FIELD`）在错误码上可区分，且错误带 `path`。 | `test/surface.test.ts` · 未知组件类型与结构错误在错误码上可区分，且都带 path |
@@ -158,10 +180,18 @@
 | **UI2-004** | specs/014-client-selfhost-ui.md | 横幅显示 path / reason / 自检结果 / 版本号 / 差异行数，带关闭按钮；`kind:'revert'` 文案为「已回滚」，与 `write` 不同；`reason` 等自由文本全部转义。 | `test/client-selfhost-ui.test.ts` · 横幅显示 path / reason / 自检 / 版本 / 差异，可关闭，revert 文案不同且文本转义 |
 | **UI2-005** | specs/014-client-selfhost-ui.md | 检查器新增「客户端源码」区：`/api/state` 的 `sources: [{path,bytes,versions}]` 渲染成路径 / 字节 / 版本数列表，`index.html` 含 `#sources`，字段缺失时退化为空列表、单列显示 `—`，不炸。 | `test/client-selfhost-ui.test.ts` · 检查器「客户端源码」区渲染 path / bytes / versions，缺字段退化为空列表 |
 | **UI2-006** | specs/014-client-selfhost-ui.md | 防御性：`normalizeClientChange` 对 `null` / 非对象 / 未知 `kind` / 非字符串字段 / 非数字版本一律退化为默认值，`renderClientChange`、`renderSourceRow`、`cacheBustHref`、`findStyleLinkIndex` 对任意输入都不抛异常，且进入 DOM 的文本都经过 `escapeHtml`。 | `test/client-selfhost-ui.test.ts` · 防御性：坏输入不抛异常、未知字段退化，进入 DOM 的文本全部转义 |
+| **UI3-001** | specs/017-settings-ui.md | 顶栏「设置」入口打开独立的设置页并覆盖主区域，返回按钮回到对话且不刷新页面。 | `test/client-settings-ui.test.ts` · 顶栏「设置」入口打开覆盖主区域的独立设置页，返回按钮回到对话且不刷新页面 |
+| **UI3-002** | specs/017-settings-ui.md | 顶栏与设置页显著位置显示当前生效的模型（`模型名 · 来源`），缺字段退化为默认值。 | `test/client-settings-ui.test.ts` · 当前生效模型显示为「模型 · 来源」，顶栏与设置页同步，缺字段退化为默认值 |
+| **UI3-003** | specs/017-settings-ui.md | 表单字段齐全：协议二选一、Base URL、模型名、`type="password"` 的 API Key、温度 / 最大输出 token / 超时；协议说明写清两种端点差异。 | `test/client-settings-ui.test.ts` · 表单字段齐全（协议二选一 / Base URL / 模型名 / password 的 Key / 三个可选数字）且说明端点差异 |
+| **UI3-004** | specs/017-settings-ui.md | 服务端设置 → 表单值：已存 Key 时输入框留空、placeholder 显示打码值并提示「留空表示不修改」；归一化永不读取明文 Key。 | `test/client-settings-ui.test.ts` · 服务端设置 → 表单值：Key 留空 + placeholder 显示打码值 + 「留空表示不修改」；永不读明文 |
+| **UI3-005** | specs/017-settings-ui.md | 四个预设按钮（本机 Ollama / OpenAI 官方 / Anthropic 官方 / DeepSeek）点一下填好协议 + Base URL + 模型名，且不动已输入的 Key。 | `test/client-settings-ui.test.ts` · 四个预设按钮一键填好协议 + Base URL + 模型名，且不动人类已输入的 Key |
+| **UI3-006** | specs/017-settings-ui.md | 本地校验拦住非法输入（空 Base URL / 空模型名 / 未知协议 / 坏数字）且不发请求；合法则 `PUT /api/settings`，成功后回到对话并提示。 | `test/client-settings-ui.test.ts` · 本地校验拦住非法输入且不发请求；合法则 PUT /api/settings，成功后回到对话并提示 |
+| **UI3-007** | specs/017-settings-ui.md | 测试连接调 `POST /api/settings/test`：成功显示延迟 ms 与模型回复片段，失败显示可读错误，缺字段退化不炸。 | `test/client-settings-ui.test.ts` · 测试连接调 POST /api/settings/test：成功显示延迟与回复片段，失败显示可读错误 |
+| **UI3-008** | specs/017-settings-ui.md | 防御与安全：Key 不进 localStorage / 日志 / URL 且永不回显明文，进入 DOM 的文本全部转义，任意坏输入不抛异常。 | `test/client-settings-ui.test.ts` · 防御与安全：Key 不进浏览器存储 / 日志 / URL，文本全部转义，坏输入不抛异常 |
 
 ## 统计
 
-- 验收标准：**154** 条
-- 已覆盖：**154** 条
+- 验收标准：**184** 条
+- 已覆盖：**184** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

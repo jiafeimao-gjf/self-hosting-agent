@@ -14,6 +14,7 @@ import { ApprovalGate } from './kernel/approval.ts';
 import { AgentPool } from './kernel/pool.ts';
 import { TeamRunner } from './orchestrator/team.ts';
 import { ClientSession } from './server/session.ts';
+import type { ModelSettings } from './server/settings.ts';
 import { startServer } from './server/http-server.ts';
 import { ViewDocument } from './surface/document.ts';
 import { SurfaceIngest } from './surface/ingest.ts';
@@ -243,20 +244,23 @@ async function runServe(argv: string[]): Promise<number> {
   const baseUrl = args['base-url'] ?? process.env.AGENT_BASE_URL ?? 'http://127.0.0.1:11434/v1';
   const modelName = args['model-name'] ?? process.env.AGENT_MODEL_NAME ?? 'qwen3:4b';
 
+  // 设置页可以随时改模型；命令行给的只是「还没配过时」的初值
+  const modelSettings: Partial<ModelSettings> = {
+    protocol: 'openai',
+    baseUrl,
+    model: modelName,
+    apiKey: args['api-key'] ?? process.env.AGENT_API_KEY ?? '',
+    timeoutMs: Number(args['model-timeout'] ?? process.env.AGENT_MODEL_TIMEOUT ?? '180000'),
+  };
+
   if (choice === 'demo') {
-    modelLabel = '内置演示模型（确定性、秒回、不需要任何模型服务）';
+    agentEnv = { AGENT_MODEL: 'demo' };
+    modelLabel = '内置演示模型（确定性、秒回、不需要任何模型服务），可在设置页切到真模型';
   } else if (choice === 'auto' && !(await probeEndpoint(baseUrl))) {
-    modelLabel = `没找到 ${baseUrl}，用内置演示模型（想接真模型：--model http --base-url ... --model-name ...）`;
+    agentEnv = { AGENT_MODEL: 'demo' };
+    modelLabel = `没找到 ${baseUrl}，先用内置演示模型（设置页可以改）`;
   } else {
-    agentEnv = {
-      AGENT_MODEL: 'http',
-      AGENT_BASE_URL: baseUrl,
-      AGENT_API_KEY: args['api-key'] ?? process.env.AGENT_API_KEY ?? 'ollama',
-      AGENT_MODEL_NAME: modelName,
-      // 本机小模型会「边想边说」，给足时间；人类随时可以按中断
-      AGENT_MODEL_TIMEOUT: args['model-timeout'] ?? process.env.AGENT_MODEL_TIMEOUT ?? '180000',
-    };
-    modelLabel = `${modelName} @ ${baseUrl}`;
+    modelLabel = `${modelName} @ ${baseUrl}（可在设置页修改）`;
   }
 
   fs.mkdirSync(dir, { recursive: true });
@@ -265,6 +269,7 @@ async function runServe(argv: string[]): Promise<number> {
   const session = new ClientSession({
     dir,
     agentEnv,
+    modelSettings,
     approval: new ApprovalGate({ policy: () => 'allow_once' }),
   });
   const server = await startServer({ session, port });
@@ -274,6 +279,7 @@ async function runServe(argv: string[]): Promise<number> {
   console.log(`  模型：${modelLabel}`);
   console.log(`  数据：${dir}`);
   console.log(`  可改源码：${session.clientSource?.root ?? '（未启用自举）'}`);
+  console.log(`  设置页：顶栏「设置」——支持 OpenAI 兼容与 Anthropic 两种协议`);
   console.log('  审批：人类在场 → 自动放行，但每次动作都写进事件日志（审批 UI 属下一阶段）');
   console.log('\n  在页面里说话，Agent 会一边回你，一边把它自己的界面改给你看。');
   console.log('  试试说「换个配色」——它会去改自己的 style.css，自检通过后界面当场变色。Ctrl+C 退出。\n');

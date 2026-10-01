@@ -703,3 +703,196 @@ body {
     grid-row: auto;
   }
 }
+
+/* ---------- 设置页（SPEC-017） ---------- */
+
+/* 顶栏 / 设置页头部共用的当前模型标记 */
+.model-chip {
+  padding: 2px 10px;
+  border: 1px solid var(--border-strong);
+  border-radius: 999px;
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+  max-width: 46vw;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 覆盖主区域的独立页：顶部栏仍然可见，所以从 57px 开始（与 .grid 的算法一致） */
+.settings-page {
+  position: fixed;
+  top: 57px;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 20;
+  overflow-y: auto;
+  background: var(--bg);
+}
+
+.settings-page[hidden] {
+  display: none;
+}
+
+.settings-inner {
+  max-width: 760px;
+  margin: 0 auto;
+  padding: 18px 16px 40px;
+}
+
+.settings-head {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.settings-head h2 {
+  margin: 0;
+  font-size: 15px;
+  letter-spacing: 0.06em;
+  color: var(--cyan);
+  text-transform: uppercase;
+}
+
+.settings-form {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  margin-top: 16px;
+}
+
+.settings-group {
+  margin: 0;
+  padding: 10px 12px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: rgba(11, 16, 28, 0.72);
+}
+
+.settings-group legend {
+  padding: 0 6px;
+  color: var(--text-muted);
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.protocol-choice {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+
+.radio {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  cursor: pointer;
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.field-wide {
+  grid-column: span 2;
+}
+
+.field-label {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings-hint {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.settings-hint code {
+  padding: 0 4px;
+  border-radius: 4px;
+  background: var(--surface-alt);
+  color: var(--cyan);
+  font-family: var(--mono);
+}
+
+.settings-presets {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.preset-row {
+  display: inline-flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.preset-btn.is-active {
+  border-color: var(--cyan);
+  color: var(--cyan);
+  box-shadow: 0 0 0 2px rgba(34, 211, 238, 0.14);
+}
+
+.settings-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.settings-result {
+  min-height: 20px;
+}
+
+.settings-result .result-title {
+  font-weight: 600;
+}
+
+.settings-result .result-latency,
+.settings-result .result-reply,
+.settings-result .result-error {
+  margin-left: 10px;
+}
+
+.settings-result.is-ok {
+  color: var(--success);
+}
+
+.settings-result.is-fail {
+  color: var(--danger);
+}
+
+.settings-result.is-pending {
+  color: var(--warning);
+}
+
+.settings-result .form-errors {
+  margin: 0;
+  padding-left: 18px;
+}
+
+@media (max-width: 900px) {
+  .settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .field-wide {
+    grid-column: span 1;
+  }
+}

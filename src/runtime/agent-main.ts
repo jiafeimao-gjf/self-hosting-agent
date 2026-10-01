@@ -22,6 +22,7 @@ import type {
 import { EventLog } from '../eventlog/log.ts';
 import { scriptedModel } from '../loop/fake-model.ts';
 import { createHttpModel } from '../loop/http-model.ts';
+import { createAnthropicModel } from '../loop/anthropic-model.ts';
 import { projectConversation } from './conversation.ts';
 
 function parseArgs(argv: string[]): Record<string, string> {
@@ -265,13 +266,16 @@ function buildModel(): ModelPort {
     return withDelay(scriptedModel(script), stepDelayMs);
   }
 
-  // 真模型端口：AGENT_MODEL=http 时走 OpenAI 兼容 HTTP 接口
+  // 真模型端口：AGENT_MODEL=http 时按 AGENT_PROTOCOL 选 openai / anthropic
   const kind = args.model ?? process.env.AGENT_MODEL ?? 'demo';
   if (kind === 'http') {
+    const protocol = args.protocol ?? process.env.AGENT_PROTOCOL ?? 'openai';
     const baseUrl = args['base-url'] ?? process.env.AGENT_BASE_URL ?? '';
     const apiKey = args['api-key'] ?? process.env.AGENT_API_KEY ?? '';
     const modelName = args['model-name'] ?? process.env.AGENT_MODEL_NAME ?? '';
     const timeoutRaw = args['model-timeout'] ?? process.env.AGENT_MODEL_TIMEOUT;
+    const maxTokensRaw = args['max-tokens'] ?? process.env.AGENT_MAX_TOKENS;
+    const temperatureRaw = args['temperature'] ?? process.env.AGENT_TEMPERATURE;
 
     if (baseUrl === '' || modelName === '') {
       // 配置不全就明确报错，而不是偷偷退回假模型假装一切正常
@@ -282,12 +286,19 @@ function buildModel(): ModelPort {
       };
     }
 
-    const port = createHttpModel({
+    const shared = {
       baseUrl,
       apiKey,
       model: modelName,
       ...(timeoutRaw === undefined ? {} : { timeoutMs: Number(timeoutRaw) }),
-    });
+      ...(maxTokensRaw === undefined ? {} : { maxTokens: Number(maxTokensRaw) }),
+      ...(temperatureRaw === undefined ? {} : { temperature: Number(temperatureRaw) }),
+    };
+
+    const port =
+      protocol === 'anthropic' ? createAnthropicModel(shared) : createHttpModel(shared);
+
+    process.stderr.write(`[agent-main] 模型端口：${protocol} · ${modelName} @ ${baseUrl}\n`);
     return withDelay(port, stepDelayMs);
   }
 

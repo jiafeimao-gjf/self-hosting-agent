@@ -13,9 +13,12 @@
       <h1 class="brand">Agent Client</h1>
       <span class="brand-sub">界面由 Agent 亲手改造</span>
       <span id="conn" class="conn" data-state="connecting" aria-live="polite">连接中…</span>
+      <!-- SPEC-017：当前生效的模型，形如「qwen3:4b · 本机 Ollama」，文本由 app.js 用 textContent 写入 -->
+      <span id="current-model" class="model-chip" title="当前生效的模型">—</span>
       <span class="version-chip">界面版本 <b id="version">v0</b></span>
       <button id="rollback" class="btn" type="button" title="把界面文档退回指定版本">回滚</button>
       <button id="interrupt" class="btn btn-danger" type="button" title="人类夺权，让当前一轮停在最近边界">中断</button>
+      <button id="settings-open" class="btn" type="button" aria-expanded="false" title="配置模型与协议">设置</button>
     </header>
 
     <!-- SPEC-014 变更横幅：client.changed 事件驱动，可关闭；刷新按钮只由人类点击 -->
@@ -74,6 +77,78 @@
         </div>
       </section>
     </main>
+
+    <!--
+      SPEC-017 设置页：一个覆盖主区域的独立页（返回按钮回到对话，不刷新页面）。
+      说明文案 / placeholder / 预设按钮由 src/client/settings.js 在运行时填，
+      所以这里不写死任何端点地址；所有进 DOM 的动态文本都经过转义。
+    -->
+    <section id="settings" class="settings-page" aria-label="设置" hidden>
+      <div class="settings-inner">
+        <header class="settings-head">
+          <button id="settings-back" class="btn" type="button" title="返回对话">← 返回对话</button>
+          <h2>模型设置</h2>
+          <span id="settings-model" class="model-chip" title="当前生效的模型" aria-live="polite">—</span>
+          <span class="hint">支持 OpenAI 兼容协议与 Anthropic 协议</span>
+        </header>
+
+        <form id="settings-form" class="settings-form" autocomplete="off">
+          <fieldset class="settings-group">
+            <legend>协议</legend>
+            <div class="protocol-choice">
+              <label class="radio">
+                <input id="set-protocol-openai" type="radio" name="protocol" value="openai" />
+                <span>OpenAI 兼容</span>
+              </label>
+              <label class="radio">
+                <input id="set-protocol-anthropic" type="radio" name="protocol" value="anthropic" />
+                <span>Anthropic</span>
+              </label>
+            </div>
+            <div id="protocol-hint" class="settings-hint" aria-live="polite"></div>
+          </fieldset>
+
+          <div class="settings-grid">
+            <label class="field field-wide">
+              <span class="field-label">Base URL</span>
+              <input id="set-base-url" class="input" type="text" spellcheck="false" />
+            </label>
+            <label class="field">
+              <span class="field-label">模型名</span>
+              <input id="set-model" class="input" type="text" spellcheck="false" />
+            </label>
+            <label class="field field-wide">
+              <span class="field-label">API Key</span>
+              <input id="set-api-key" class="input" type="password" autocomplete="new-password" spellcheck="false" />
+              <span id="api-key-hint" class="settings-hint"></span>
+            </label>
+            <label class="field">
+              <span class="field-label">温度（可选）</span>
+              <input id="set-temperature" class="input" type="number" step="0.1" min="0" max="2" />
+            </label>
+            <label class="field">
+              <span class="field-label">最大输出 token（可选）</span>
+              <input id="set-max-tokens" class="input" type="number" step="1" min="1" />
+            </label>
+            <label class="field">
+              <span class="field-label">超时 ms（可选）</span>
+              <input id="set-timeout" class="input" type="number" step="100" min="1" />
+            </label>
+          </div>
+
+          <div class="settings-presets">
+            <span class="field-label">预设</span>
+            <span id="presets" class="preset-row"></span>
+          </div>
+
+          <div class="settings-actions">
+            <button id="settings-test" class="btn" type="button">测试连接</button>
+            <button id="settings-save" class="btn btn-primary" type="submit">保存</button>
+          </div>
+          <div id="settings-result" class="settings-result" role="status" aria-live="polite"></div>
+        </form>
+      </div>
+    </section>
 
     <script type="module" src="/app.js"></script>
   </body>

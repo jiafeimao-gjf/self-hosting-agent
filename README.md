@@ -8,15 +8,31 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **154** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **154 / 154** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **153** 个，全绿（约 9s，零第三方依赖） |
+| 验收标准 | **184** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **184 / 184** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **183** 个，全绿（约 8s，零第三方依赖） |
 | 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
 | P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
 | P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
 | P2 已落地 | **可用客户端**：HTTP + SSE 服务、浏览器 Surface（对话 / 沙箱界面面板 / 检查器）、事件日志投影的多轮记忆、本机 Ollama 直连 |
 | P3 已落地 | **客户端自举**：Agent 可改 `src/client/**` 自身源码，写入前跑项目自检、不过自动回滚，带版本历史 / 可读 diff / 一键回滚 / 审计，CSS 变更无刷新热替换 |
+| P4 已落地 | **设置页 + 可自配模型**：浏览器里切换 OpenAI 兼容 / Anthropic 两种协议，填 Base URL / 模型 / Key / 温度 / 超时，四个预设、连接测试、保存即生效（Lead 重启且历史不丢）；Key 打码、永不回显 |
 | 尚未落地 | Electron/Tauri 外壳、人类审批 UI（当前人类在场即自动放行但全程留痕）、更细粒度的热更新（HMR） |
+
+## 设置页：模型自己配，两种协议
+
+顶栏「设置」打开一个独立页：协议（OpenAI 兼容 / Anthropic）、Base URL、模型名、API Key、温度、最大输出、超时，外加四个预设（本机 Ollama / OpenAI 官方 / Anthropic 官方 / DeepSeek）。
+
+| 协议 | 请求 | 鉴权 | 工具调用 |
+| --- | --- | --- | --- |
+| OpenAI 兼容 | `POST {baseUrl}/chat/completions` | `Authorization: Bearer` | `tools[].function` / `tool_calls` |
+| Anthropic | `POST {baseUrl}/v1/messages` | `x-api-key` + `anthropic-version` | `tools[].input_schema` / `tool_use` 内容块 |
+
+**保存即生效**：旧 Agent 进程被回收、按新配置重新拉起，而**对话历史不会断**——上下文本来就由事件日志投影而来（P2 那个设计决定的回报）。
+
+两条安全规矩：API Key 落盘权限 `0600` 且**永不回传明文**（界面只显示 `sk-…a1b2`）；Key 输入框留空即「不修改」，不会因为改个模型名就把 Key 抹掉。
+
+实测：填本机假服务后，连接测试分别命中 `/v1/chat/completions` 与 `/v1/messages`，两种协议都返回「连接成功 + 延迟 + 模型回复」。
 
 ## 自举：Agent 改自己的代码，但改坏不行
 

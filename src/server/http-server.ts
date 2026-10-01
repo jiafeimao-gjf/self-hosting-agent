@@ -159,6 +159,27 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       return;
     }
 
+    if (route === '/api/settings' && method === 'GET') {
+      sendJson(res, 200, session.publicSettings());
+      return;
+    }
+
+    if (route === '/api/settings' && method === 'PUT') {
+      readBody(req).then((body) => {
+        const result = session.updateSettings(body);
+        sendJson(res, result.ok ? 200 : 400, result);
+      }).catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
+      return;
+    }
+
+    if (route === '/api/settings/test' && method === 'POST') {
+      readBody(req)
+        .then((body) => session.testSettings(body))
+        .then((result) => sendJson(res, 200, result))
+        .catch((err: Error) => sendJson(res, 200, { ok: false, error: err.message }));
+      return;
+    }
+
     if (route === '/api/client/revert' && method === 'POST') {
       readBody(req).then((body) => {
         const target = typeof body.path === 'string' ? body.path : '';
@@ -220,8 +241,20 @@ export async function startServer(options: ServeOptions): Promise<RunningServer>
     server,
     close: () =>
       new Promise<void>((resolve) => {
-        server.close(() => resolve());
+        let settled = false;
+        const finish = (): void => {
+          if (settled) return;
+          settled = true;
+          resolve();
+        };
+        server.close(finish);
+        // keep-alive 连接会让 close() 一直等：主动断开，且补一刀防竞态
         server.closeAllConnections?.();
+        const timer = setTimeout(() => {
+          server.closeAllConnections?.();
+          finish();
+        }, 50);
+        timer.unref?.();
       }),
   };
 }

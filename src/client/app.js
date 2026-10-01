@@ -1,19 +1,22 @@
 /**
  * SPEC-012 §2–§3 客户端界面逻辑；SPEC-014 补上「客户端自举」的呈现
- * （订阅 `client.changed`：`.css` 无刷新热替换，`.js`/`.html` 只给人类点击的刷新横幅）。
+ * （订阅 `client.changed`：`.css` 无刷新热替换，`.js`/`.html` 只给人类点击的刷新横幅）；
+ * SPEC-017 补上浏览器端设置页的接线（打开 / 关闭、保存、测试连接、当前模型 chip）。
  *
  * 分工：
  *
  * - 本文件上半部分是**纯函数**（消息 / 工具摘要 / 时间线 / 快照归一化 → HTML 字符串），
  *   不碰 DOM，`node --test` 里可以直接 import 断言（UI-008）；
- * - 下半部分 `boot()` 只做连线：EventSource 订阅 `/api/stream`、四个 SSE 事件、
- *   三个 POST 端点、把渲染结果塞进 DOM（UI-006 / UI-007）。
+ * - 下半部分 `boot()` 只做连线：EventSource 订阅 `/api/stream`、五个 SSE 事件、
+ *   三个 POST 端点、把渲染结果塞进 DOM（UI-006 / UI-007）；设置页的纯逻辑与 DOM
+ *   渲染在 `settings.js`，这里只实例化并接线（UI3-001）。
  *
  * 沙箱是架构的一环：Agent 给的 HTML 只进 `<iframe sandbox="allow-scripts" srcdoc>`，
  * 收到 `document` 事件时**只更新 srcdoc**，宿主页面绝不刷新。
  */
 
 import { escapeHtml, renderViewSpec } from './renderer.js';
+import { createSettingsPage, currentModelText } from './settings.js';
 
 /** 连接状态 → 中文文案 */
 export const CONNECTION_LABELS = {
@@ -512,6 +515,9 @@ function boot() {
 
     dom.messages.innerHTML = projectMessages(snapshot.messages).map(renderMessage).join('');
     dom.messages.scrollTop = dom.messages.scrollHeight;
+
+    // SPEC-017：/api/state 若带了生效模型信息，顶栏 chip 跟着更新（没有就不冒充）
+    settingsPage.applyEffectiveModel(raw);
   }
 
   function applyFrame(payload) {
@@ -626,6 +632,69 @@ function boot() {
     }
   }
 
+  /**
+   * SPEC-017 设置页的请求助手：需要「解析后的 JSON + HTTP 状态」而不只是 Response。
+   * 设置 / 测试连接的请求体里可能带人类刚输入的 Key，所以只走请求体——
+   * 绝不拼进 URL、不落浏览器存储、不打日志。
+   */
+  async function requestJson(path, options = {}) {
+    const method = options.method ?? 'POST';
+    const init = { method, headers: { 'content-type': 'application/json' } };
+    if (options.body !== undefined && method !== 'GET') init.body = JSON.stringify(options.body);
+    try {
+      const response = await fetch(path, init);
+      let data = null;
+      try {
+        data = await response.json();
+      } catch {
+        data = null;
+      }
+      return { status: response.status, ok: response.ok, data };
+    } catch {
+      return null; // 网络层失败：设置页据此显示「服务端没有响应」
+    }
+  }
+
+  const settingsNodes = {
+    page: document.getElementById('settings'),
+    open: document.getElementById('settings-open'),
+    back: document.getElementById('settings-back'),
+    form: document.getElementById('settings-form'),
+    protocolInputs: Array.from(document.querySelectorAll('input[name="protocol"]')),
+    baseUrl: document.getElementById('set-base-url'),
+    model: document.getElementById('set-model'),
+    apiKey: document.getElementById('set-api-key'),
+    temperature: document.getElementById('set-temperature'),
+    maxTokens: document.getElementById('set-max-tokens'),
+    timeoutMs: document.getElementById('set-timeout'),
+    protocolHint: document.getElementById('protocol-hint'),
+    apiKeyHint: document.getElementById('api-key-hint'),
+    presets: document.getElementById('presets'),
+    test: document.getElementById('settings-test'),
+    save: document.getElementById('settings-save'),
+    result: document.getElementById('settings-result'),
+    topbarModel: document.getElementById('current-model'),
+    pageModel: document.getElementById('settings-model'),
+  };
+
+  // 设置页的纯逻辑与 DOM 都在 settings.js 里；这里只接线（UI3-001）
+  const settingsPage = createSettingsPage({
+    nodes: settingsNodes,
+    request: requestJson,
+    onSaved(saved) {
+      // 保存成功：设置页内部已回到对话页，这里补一句人类看得见的提示
+      appendMessage(renderMessage({ kind: 'done', agent: '设置', text: `已保存模型设置：${currentModelText(saved)}` }));
+      pushTimeline({ type: 'settings.saved', agent: 'human', ts: new Date().toISOString() });
+    },
+  });
+
+  if (settingsNodes.open !== undefined) {
+    settingsNodes.open.addEventListener('click', () => settingsPage.open());
+  }
+
+  // 顶栏模型 chip 先按服务端的已存设置显示（拿不到就退化为 SPEC-015 的默认值）
+  void settingsPage.load();
+
   function send() {
     const text = dom.input.value.trim();
     if (text.length === 0) return;
@@ -633,7 +702,6 @@ function boot() {
     dom.input.value = '';
     void post('/api/message', { text });
   }
-
   dom.composer.addEventListener('submit', (event) => {
     event.preventDefault();
     send();
@@ -687,6 +755,8 @@ function boot() {
   source.addEventListener('done', (event) => applyDone(parseData(event.data)));
   // SPEC-014：客户端源码变更（事件名含点号，必须用完整名字订阅）
   source.addEventListener('client.changed', (event) => applyClientChange(parseData(event.data)));
+  // SPEC-015 SET-008 / SPEC-017：设置变更广播 settings 事件，顶栏的当前模型 chip 同步更新
+  source.addEventListener('settings', (event) => settingsPage.applyEffectiveModel(parseData(event.data)));
 }
 
 /** SSE 的 data 是字符串；坏了也不能让界面停摆 */

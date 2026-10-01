@@ -13,12 +13,15 @@ import { ClientSource } from '../orchestrator/client-source.ts';
 import type { SelfTestResult } from '../orchestrator/self-test.ts';
 import { EventLog } from '../eventlog/log.ts';
 import type { ApprovalGate } from '../kernel/approval.ts';
+import { DEFAULT_MODEL_SETTINGS, SettingsStore, settingsToAgentEnv } from './settings.ts';
+import type { ModelSettings, PublicSettings } from './settings.ts';
+import { createModelPort } from './model-factory.ts';
 import { projectConversation } from '../runtime/conversation.ts';
 import type { ContextItem } from '../loop/loop.ts';
 import type { Frame } from '../protocol/frames.ts';
 import type { LoggedEvent } from '../eventlog/log.ts';
 
-export type SessionEventType = 'state' | 'frame' | 'document' | 'done' | 'client.changed';
+export type SessionEventType = 'state' | 'frame' | 'document' | 'done' | 'client.changed' | 'settings';
 
 export interface SessionEvent {
   type: SessionEventType;
@@ -36,6 +39,8 @@ export interface ClientState {
   messages: Array<{ from: string; to: string; kind: string; body: string; ts: string }>;
   /** SPEC-013：客户端自身源码（Agent 可以改的那些） */
   sources: Array<{ path: string; bytes: number; versions: number }>;
+  /** SPEC-015：当前生效的模型配置（Key 已打码） */
+  model: PublicSettings;
 }
 
 export interface SessionOptions {
@@ -54,6 +59,8 @@ export interface SessionOptions {
   selfTest?: (input: { changed: string[] }) => Promise<SelfTestResult>;
   /** 审批门（默认拒绝；`serve` 会用「人类在旁边看着」的策略） */
   approval?: ApprovalGate;
+  /** 初始模型设置（命令行参数/环境变量）；持久化过的设置优先 */
+  modelSettings?: Partial<ModelSettings>;
 }
 
 export class ClientSession {
@@ -67,6 +74,10 @@ export class ClientSession {
   #lastDocumentVersion = -1;
   #busySince: number | null = null;
   #started = false;
+  #settingsStore: SettingsStore;
+  #model: ModelSettings;
+  #restarting: Promise<void> = Promise.resolve();
+  #closed = false;
 
   constructor(options: SessionOptions = {}) {
     this.dir = options.dir ?? path.join(os.tmpdir(), 'agent-client', 'client-session');
@@ -81,6 +92,13 @@ export class ClientSession {
 
     // 事件日志先建好，源码管理器与 runner 共用同一份（审计只有一个来源）
     const log = options.log ?? new EventLog({ dir: path.join(this.dir, 'events') });
+
+    // SPEC-015：设置持久化在会话目录；命令行给的只是「还没配过时」的初值
+    this.#settingsStore = new SettingsStore({ file: path.join(this.dir, 'settings.json') });
+    // 界面上配过的设置优先；命令行参数只在「还没配过」时当默认值
+    this.#model = this.#settingsStore.exists()
+      ? this.#settingsStore.load()
+      : { ...DEFAULT_MODEL_SETTINGS, ...(options.modelSettings ?? {}) };
 
     // P3：接上源码管理器，Agent 才能改自己的界面代码（且必须过自检门禁）
     const clientSource =
@@ -117,10 +135,75 @@ export class ClientSession {
 
   /** 拉起 Lead。幂等：重复调用不会起第二个。 */
   start(): void {
-    if (this.#started) return;
+    if (this.#started || this.#closed) return;
     this.#started = true;
-    this.runner.spawnAgent('lead', { ...this.#lead, env: { ...this.#agentEnv, ...(this.#lead.env ?? {}) } });
+    // 优先级：设置 < 显式 agentEnv < lead 自己的 env（测试/演示可以强行指定，例如 demo 模型）
+    const env = { ...settingsToAgentEnv(this.#model), ...this.#agentEnv, ...(this.#lead.env ?? {}) };
+    this.runner.spawnAgent('lead', { ...this.#lead, env });
     this.#emit({ type: 'state', data: this.state() });
+  }
+
+  /** 当前生效模型（Key 已打码） */
+  publicSettings(): PublicSettings {
+    return this.#settingsStore.toPublic(this.#model);
+  }
+
+  /**
+   * 保存设置并让它**真的生效**：回收旧 Agent（它们用的是旧模型），按新环境重新拉起。
+   * 历史不会丢——上下文本来就由事件日志投影而来。
+   */
+  updateSettings(input: unknown): { ok: boolean; settings?: PublicSettings; restarted?: boolean; error?: string } {
+    const saved = this.#settingsStore.save(input, this.#model);
+    if (!saved.ok) return { ok: false, error: `${saved.error.code}: ${saved.error.message}` };
+
+    const changed = JSON.stringify(saved.value) !== JSON.stringify(this.#model);
+    this.#model = saved.value;
+
+    if (changed) {
+      this.#restarting = this.#restarting.then(async () => {
+        // 关停过程中不能再拉起新进程，否则会留下无法回收的孤儿 Agent
+        if (this.#closed) return;
+        this.#started = false;
+        await this.runner.reclaim();
+        if (this.#closed) return;
+        this.start();
+      });
+    }
+
+    this.#emit({ type: 'settings', data: this.publicSettings() });
+    this.#emit({ type: 'state', data: this.state() });
+    return { ok: true, settings: this.publicSettings(), restarted: changed };
+  }
+
+  /** 用当前（或候选）配置发一次最小请求（SET-006） */
+  async testSettings(input?: unknown): Promise<{ ok: boolean; latencyMs?: number; reply?: string; error?: string; model?: PublicSettings }> {
+    let candidate = this.#model;
+    if (input !== undefined && input !== null && typeof input === 'object' && Object.keys(input).length > 0) {
+      // 测试不写盘：只校验，落盘交给 PUT
+      const probe = this.#settingsStore.validate(input, this.#model);
+      if (!probe.ok) return { ok: false, error: `${probe.error.code}: ${probe.error.message}` };
+      candidate = probe.value;
+    }
+
+    const port = createModelPort(candidate, { timeoutMs: candidate.timeoutMs ?? 60_000 });
+    const startedAt = Date.now();
+    try {
+      const output = await port.step({
+        agentId: 'settings-test',
+        turn: 1,
+        context: [{ role: 'human', text: '只回两个字：你好' }],
+        tools: [],
+      });
+      const reply = (output.text ?? '').trim();
+      return {
+        ok: true,
+        latencyMs: Date.now() - startedAt,
+        reply: reply === '' ? '（模型没有返回文本，但连接是通的）' : reply.slice(0, 80),
+        model: this.#settingsStore.toPublic(candidate),
+      };
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
   }
 
   onEvent(listener: (event: SessionEvent) => void): () => void {
@@ -238,6 +321,7 @@ export class ClientSession {
       events,
       messages,
       sources,
+      model: this.publicSettings(),
     };
   }
 
@@ -258,6 +342,9 @@ export class ClientSession {
   }
 
   async close(): Promise<void> {
+    this.#closed = true;
+    // 先等重启链收尾：否则它会在我们把进程都回收之后又拉起一个
+    await this.#restarting.catch(() => undefined);
     await this.runner.reclaim();
     this.#listeners.clear();
   }
