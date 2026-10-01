@@ -1,0 +1,457 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-client.dev/schemas/frame.schema.json",
+  "title": "Agent Client Frame",
+  "description": "SPEC-001 帧协议。由 src/protocol/frames.ts 生成，请勿手工修改。",
+  "oneOf": [
+    {
+      "title": "human.message",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "text"
+      ],
+      "properties": {
+        "t": {
+          "const": "human.message"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        },
+        "at": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "peer.message",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "from",
+        "body"
+      ],
+      "properties": {
+        "t": {
+          "const": "peer.message"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "from": {
+          "type": "string"
+        },
+        "body": {
+          "type": "string"
+        },
+        "taskId": {
+          "type": "string"
+        },
+        "artifacts": {
+          "type": "array"
+        }
+      }
+    },
+    {
+      "title": "ui.event",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "target",
+        "event"
+      ],
+      "properties": {
+        "t": {
+          "const": "ui.event"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "event": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "title": "approval.reply",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "id",
+        "decision"
+      ],
+      "properties": {
+        "t": {
+          "const": "approval.reply"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "decision": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "interrupt",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "reason"
+      ],
+      "properties": {
+        "t": {
+          "const": "interrupt"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "agent.thinking",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "text"
+      ],
+      "properties": {
+        "t": {
+          "const": "agent.thinking"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "tool.call",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "id",
+        "name"
+      ],
+      "properties": {
+        "t": {
+          "const": "tool.call"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "args": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "title": "tool.result",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "id",
+        "ok"
+      ],
+      "properties": {
+        "t": {
+          "const": "tool.result"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "type": "string"
+        },
+        "error": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "ui.patch",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "scope",
+        "op",
+        "spec"
+      ],
+      "properties": {
+        "t": {
+          "const": "ui.patch"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "scope": {
+          "type": "string"
+        },
+        "op": {
+          "type": "string"
+        },
+        "spec": {
+          "type": "object"
+        }
+      }
+    },
+    {
+      "title": "approval.ask",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "id",
+        "action",
+        "risk"
+      ],
+      "properties": {
+        "t": {
+          "const": "approval.ask"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "action": {
+          "type": "string"
+        },
+        "risk": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "loop.step",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "step",
+        "name"
+      ],
+      "properties": {
+        "t": {
+          "const": "loop.step"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "step": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "name": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "loop.state",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "state"
+      ],
+      "properties": {
+        "t": {
+          "const": "loop.state"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "loop.done",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "reason"
+      ],
+      "properties": {
+        "t": {
+          "const": "loop.done"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "loop.error",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "message"
+      ],
+      "properties": {
+        "t": {
+          "const": "loop.error"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "message": {
+          "type": "string"
+        },
+        "stack": {
+          "type": "string"
+        }
+      }
+    }
+  ]
+}

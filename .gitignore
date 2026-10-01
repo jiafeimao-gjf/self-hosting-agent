@@ -1,0 +1,9 @@
+node_modules/
+dist/
+*.tsbuildinfo
+
+# 运行时产物（事件日志、快照、渲染结果）
+.agent-client/
+examples/out/
+coverage/
+.DS_Store

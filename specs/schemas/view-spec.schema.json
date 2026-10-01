@@ -1,0 +1,283 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agent-client.dev/schemas/view-spec.schema.json",
+  "title": "Agent Client View Spec",
+  "description": "SPEC-006 View Spec 组件契约。由 src/surface/viewspec.ts 生成，请勿手工修改。",
+  "$ref": "#/$defs/viewSpec",
+  "$defs": {
+    "panel": {
+      "title": "panel",
+      "description": "纵向容器，可带标题；children 允许为空数组",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "children"
+      ],
+      "properties": {
+        "type": {
+          "const": "panel"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/viewSpec"
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      }
+    },
+    "text": {
+      "title": "text",
+      "description": "一段文本",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "text"
+      ],
+      "properties": {
+        "type": {
+          "const": "text"
+        },
+        "text": {
+          "type": "string"
+        },
+        "tone": {
+          "enum": [
+            "default",
+            "muted",
+            "strong",
+            "info",
+            "success",
+            "warning",
+            "danger"
+          ]
+        }
+      }
+    },
+    "progress": {
+      "title": "progress",
+      "description": "进度条，value 取值 0~1 的有限数",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "label",
+        "value"
+      ],
+      "properties": {
+        "type": {
+          "const": "progress"
+        },
+        "label": {
+          "type": "string"
+        },
+        "value": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1
+        },
+        "tone": {
+          "enum": [
+            "default",
+            "muted",
+            "strong",
+            "info",
+            "success",
+            "warning",
+            "danger"
+          ]
+        }
+      }
+    },
+    "action": {
+      "title": "action",
+      "description": "可点击动作，emit 是回传宿主的事件名",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "label",
+        "emit"
+      ],
+      "properties": {
+        "type": {
+          "const": "action"
+        },
+        "label": {
+          "type": "string"
+        },
+        "emit": {
+          "type": "string"
+        },
+        "tone": {
+          "enum": [
+            "default",
+            "muted",
+            "strong",
+            "info",
+            "success",
+            "warning",
+            "danger"
+          ]
+        }
+      }
+    },
+    "list": {
+      "title": "list",
+      "description": "字符串列表",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "items"
+      ],
+      "properties": {
+        "type": {
+          "const": "list"
+        },
+        "items": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "title": {
+          "type": "string"
+        },
+        "tone": {
+          "enum": [
+            "default",
+            "muted",
+            "strong",
+            "info",
+            "success",
+            "warning",
+            "danger"
+          ]
+        }
+      }
+    },
+    "kv": {
+      "title": "kv",
+      "description": "键值对表，pairs 是 {key, value}[]",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "pairs"
+      ],
+      "properties": {
+        "type": {
+          "const": "kv"
+        },
+        "pairs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "key",
+              "value"
+            ],
+            "properties": {
+              "key": {
+                "type": "string"
+              },
+              "value": {
+                "type": "string"
+              }
+            }
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      }
+    },
+    "columns": {
+      "title": "columns",
+      "description": "横向分栏容器",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "children"
+      ],
+      "properties": {
+        "type": {
+          "const": "columns"
+        },
+        "children": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/viewSpec"
+          }
+        },
+        "title": {
+          "type": "string"
+        }
+      }
+    },
+    "badge": {
+      "title": "badge",
+      "description": "状态徽标",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "text"
+      ],
+      "properties": {
+        "type": {
+          "const": "badge"
+        },
+        "text": {
+          "type": "string"
+        },
+        "tone": {
+          "enum": [
+            "default",
+            "muted",
+            "strong",
+            "info",
+            "success",
+            "warning",
+            "danger"
+          ]
+        }
+      }
+    },
+    "viewSpec": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/panel"
+        },
+        {
+          "$ref": "#/$defs/text"
+        },
+        {
+          "$ref": "#/$defs/progress"
+        },
+        {
+          "$ref": "#/$defs/action"
+        },
+        {
+          "$ref": "#/$defs/list"
+        },
+        {
+          "$ref": "#/$defs/kv"
+        },
+        {
+          "$ref": "#/$defs/columns"
+        },
+        {
+          "$ref": "#/$defs/badge"
+        }
+      ]
+    }
+  }
+}

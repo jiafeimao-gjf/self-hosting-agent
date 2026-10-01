@@ -1,0 +1,19 @@
+{
+  "name": "agent-client",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Agent Client —— 原生多 Agent、独立 Agent Loop 子进程、界面可由 Agent 动态改造的客户端（P0 内核垂直切片）",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "test": "node --test \"test/**/*.test.ts\"",
+    "test:watch": "node --test --watch \"test/**/*.test.ts\"",
+    "trace": "node scripts/trace.mjs",
+    "check": "npm run trace && npm test",
+    "demo": "node src/cli.ts demo",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {}
+}
