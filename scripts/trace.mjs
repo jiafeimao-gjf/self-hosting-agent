@@ -16,8 +16,8 @@ import { fileURLToPath } from 'node:url';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const quiet = process.argv.includes('--quiet');
 
-// 前缀允许带数字（例如 E2E-001），否则规格 ID 会被静默漏掉——门禁自己也会骗人
-const ID_PATTERN = '[A-Z][A-Z0-9]{2,5}-\\d{3}';
+// 前缀允许带数字（例如 E2E-001）且允许两字母前缀（例如 UI-001），否则规格 ID 会被静默漏掉——门禁自己也会骗人
+const ID_PATTERN = '[A-Z][A-Z0-9]{1,5}-\\d{3}';
 
 function walk(dir, filter) {
   if (!fs.existsSync(dir)) return [];
@@ -42,7 +42,7 @@ function collectCriteria() {
     const rel = path.relative(root, file);
     const lines = fs.readFileSync(file, 'utf8').split('\n');
     lines.forEach((line, index) => {
-      const match = /^\s*-\s+\*\*([A-Z][A-Z0-9]{2,5}-\d{3})\*\*\s*(.*)$/.exec(line);
+      const match = /^\s*-\s+\*\*([A-Z][A-Z0-9]{1,5}-\d{3})\*\*\s*(.*)$/.exec(line);
       if (!match) return;
       const [, id, summary] = match;
       if (criteria.has(id)) {

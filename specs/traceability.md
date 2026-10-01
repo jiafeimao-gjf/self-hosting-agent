@@ -9,6 +9,16 @@
 | **ARCH-003** | specs/000-architecture.md | 架构中的「一个 Agent 一个子进程」必须可被观测：Kernel 拉起的 Agent 有独立 pid，且 pid 与宿主不同。 | `test/kernel.test.ts` · spawn 拉起独立子进程：pid 与宿主不同，能读到子进程发出的帧 |
 | **ARCH-004** | specs/000-architecture.md | 跨层数据只能是 `src/protocol` 定义的帧类型：所有 `ui.patch` / `human.message` 等字面量必须来自帧规格表。 | `test/architecture.test.ts` · 跨层数据只能是协议帧：src 里出现的帧字面量必须都在帧表里 |
 | **ARCH-005** | specs/000-architecture.md | 每条规格的验收标准都必须被至少一个测试引用（由 `scripts/trace.mjs` 强制）。 | `test/architecture.test.ts` · 规格追溯门禁必须通过：每条验收标准都有测试守着 |
+| **CLI-001** | specs/011-client.md | `GET /api/state` 返回界面文档、进程表、任务板、消息与事件尾部，字段齐全且可 JSON 解析。 | `test/server.test.ts` · GET /api/state 返回界面文档、进程表、任务板、消息与事件尾部 |
+| **CLI-002** | specs/011-client.md | `GET /api/stream` 建立 SSE 连接后，先收到一次 `state` 快照。 | `test/server.test.ts` · SSE 建立连接后先收到一次 state 快照 |
+| **CLI-003** | specs/011-client.md | `POST /api/message` 把人类输入交给 Lead，Agent 的帧通过 SSE 以 `frame` 事件实时推给客户端。 | `test/server.test.ts` · POST /api/message 把人类输入交给 Lead，帧通过 SSE 实时推流 |
+| **CLI-004** | specs/011-client.md | Agent 发出 `ui.patch` 后，客户端收到 `document` 事件，且其中的 HTML 含该组件、版本号前进（**不刷新页面**）。 | `test/server.test.ts` · Agent 改界面后客户端收到 document 事件，版本前进且 HTML 含该组件 |
+| **CLI-005** | specs/011-client.md | `POST /api/interrupt` 让正在跑的一轮在最近边界停下，SSE 收到 `done{reason:'interrupted'}`。 | `test/server.test.ts` · POST /api/interrupt 让在跑的一轮在边界停下，SSE 收到 done{interrupted} |
+| **CLI-006** | specs/011-client.md | `POST /api/rollback` 把界面文档退回指定版本，并广播新的 `document` 事件。 | `test/server.test.ts` · POST /api/rollback 把界面退回指定版本并广播新的 document 事件 |
+| **CLI-007** | specs/011-client.md | 静态资源只允许 `src/client/` 内的文件：路径穿越（`../`）被拒绝。 | `test/server.test.ts` · 静态资源只允许 src/client 目录内：路径穿越被拒绝 |
+| **CLI-008** | specs/011-client.md | 多轮记忆：第二轮请求的上下文包含第一轮的人类消息与 Agent 回复（由事件日志投影）。 | `test/server.test.ts` · 多轮记忆：第二轮上下文包含第一轮的人类消息与 Agent 回复（事件日志投影） |
+| **CLI-009** | specs/011-client.md | 模型不可用时（HTTP 端口报错）客户端收到可读的错误帧，服务本身不崩。 | `test/server.test.ts` · 模型不可用时客户端收到可读的错误帧，服务本身不崩 |
+| **CLI-010** | specs/011-client.md | 服务端可以只监听 127.0.0.1（默认），不对外暴露。 | `test/server.test.ts` · 默认只监听 127.0.0.1，不对外暴露 |
 | **E2E-001** | specs/007-e2e.md | 端到端成立：Kernel 拉起 Loop 子进程，`human.message` 进去后，宿主能收到 `ui.patch`，界面文档产生新版本，并能渲染出含该面板的 HTML。 | `test/e2e.test.ts` · 端到端：子进程跑完 Loop → ui.patch → 界面文档出新版本并渲染出 HTML |
 | **E2E-002** | specs/007-e2e.md | 非法 View Spec 被 `SurfaceIngest` 拒绝：不进入界面文档（版本不前进）、留下 rejected 记录，且**界面依然可用**。 | `test/e2e.test.ts` · 非法 View Spec 被拒绝：版本不前进、有留痕、界面依然可用 |
 | **E2E-003** | specs/007-e2e.md | 回滚：连续应用多次 patch 后可回到任意历史版本，渲染结果随之回退（架构里的「可回滚的改造权」）。 | `test/e2e.test.ts` · 回滚：多次改造后可回到任意版本，渲染结果随之回退 |
@@ -55,6 +65,7 @@
 | **LOOP-012** | specs/003-agent-loop.md | 宿主回填：收到 `tool.reply` 后必须成对发出 `tool.result`，`result` / `error` 原样透传，并写入事件日志。 | `test/loop.test.ts` · 宿主回填：tool.result 成对发出、原样透传，并写入事件日志 |
 | **LOOP-013** | specs/003-agent-loop.md | 宿主工具失败不致命：超时、被中断、回填 `ok:false` 都只产生 `tool.result{ok:false}`，Loop 继续到下一轮。 | `test/loop.test.ts` · 宿主工具失败不致命：超时/中断/回填失败都只变成 ok:false，Loop 继续 |
 | **LOOP-014** | specs/003-agent-loop.md | 没有接到宿主桥时调用宿主工具 → `tool.result{ok:false}` 且错误信息含 `NO_HOST_BRIDGE`，Loop 不崩。 | `test/loop.test.ts` · 没有宿主桥时调用宿主工具 → NO_HOST_BRIDGE，Loop 不崩 |
+| **LOOP-015** | specs/003-agent-loop.md | `seedContext` 提供的历史上下文会进入模型输入（顺序：system → 历史 → 本轮 seed），且本轮消息不会重复注入。 | `test/loop.test.ts` · seedContext 把历史上下文喂进模型输入，且不重复本轮消息 |
 | **MAIL-001** | specs/005-taskboard-mailbox.md | `send` 写入字段完整的消息，收件 Agent 可用 `pending` 读到。 | `test/mailbox.test.ts` · send 写入字段完整的消息，收件 Agent 可用 pending 读到 |
 | **MAIL-002** | specs/005-taskboard-mailbox.md | 重复 id 幂等：再次 `send` 不新增记录，`duplicate` 为 `true`，邮箱里只有一条。 | `test/mailbox.test.ts` · 重复 id 幂等：不新增记录，duplicate 为 true |
 | **MAIL-003** | specs/005-taskboard-mailbox.md | `pending(agentId)` 只读不消费：重复调用结果一致，不写 `deliveredAt`。 | `test/mailbox.test.ts` · pending 只读不消费，且返回快照副本 |
@@ -107,6 +118,7 @@
 | **SURF-010** | specs/006-surface.md | `ViewDocument.applyPatch` 按 scope 维护区块，支持 `mount` / `replace` / `patch` 三种粒度；非法变更返回错误码且不改变文档。 | `test/surface.test.ts` · applyPatch 支持 mount / replace / patch 三种粒度，非法变更不改文档 |
 | **SURF-011** | specs/006-surface.md | 版本号单调递增：每次成功变更 +1、失败不变；`rollback(version)` 回到任意历史版本的界面内容并产生新的递增版本。 | `test/surface.test.ts` · 版本号单调递增，rollback 回到历史内容并产生新的递增版本 |
 | **SURF-012** | specs/006-surface.md | `ViewDocument.render()` 输出整页 HTML，包含全部 scope 区块并保持转义。 | `test/surface.test.ts` · render 输出整页 HTML，包含全部 scope 区块并保持转义 |
+| **SURF-013** | specs/006-surface.md | 第四种粒度 `upsert`：scope 不存在则挂载、已存在则整块替换，**不做存在性检查**。真模型第一次渲染时无从知道 scope 是否存在，这是它该用的默认粒度（否则它必然浪费一轮去猜）。 | `test/surface.test.ts` · upsert 粒度：不存在则挂载、已存在则整块替换，不做存在性检查 |
 | **TASK-001** | specs/005-taskboard-mailbox.md | `create` 生成稳定 id 与完整字段（`pending`、`owner=null`、`revision=0`、`createdAt=updatedAt`），并能被 `get`/`list` 读到；读取结果是快照副本。 | `test/taskboard.test.ts` · create 生成稳定 id 与完整字段，get/list 返回快照副本 |
 | **TASK-002** | specs/005-taskboard-mailbox.md | 状态机只允许 `claim`/`release`/`complete`/`reopen` 的合法迁移，其余迁移返回 `INVALID_TRANSITION` 且任务不变。 | `test/taskboard.test.ts` · 状态机拒绝非法迁移，任务保持不变 |
 | **TASK-003** | specs/005-taskboard-mailbox.md | CAS：`expectedRevision` 不符返回 `REVISION_CONFLICT`（含 `expected`/`actual`），任务字段与 `revision` 不变。 | `test/taskboard.test.ts` · CAS：expectedRevision 不符报 REVISION_CONFLICT，任务不变 |
@@ -117,10 +129,18 @@
 | **TASK-008** | specs/005-taskboard-mailbox.md | 每次成功变更 `revision += 1`、`updatedAt` 前进，并通过 `onChange` 派发对应类型的事件、写入 `events()` 审计。 | `test/taskboard.test.ts` · 每次成功变更 revision+1、updatedAt 前进，并派发事件与审计 |
 | **TASK-009** | specs/005-taskboard-mailbox.md | `toJSON`/`fromJSON` 与 `save`/`load` 往返后任务、`revision`、依赖关系与 `ready()` 结果一致。 | `test/taskboard.test.ts` · toJSON/fromJSON 与 save/load 往返后状态一致 |
 | **TASK-010** | specs/005-taskboard-mailbox.md | 失败操作不改变任何状态、不产生事件；`release` 清空 owner 且非 owner 报 `NOT_OWNER`，`reopen` 把 `completed` 拉回 `pending`。 | `test/taskboard.test.ts` · 失败操作无变更无事件；release 清 owner，reopen 回到 pending |
+| **UI-001** | specs/012-client-ui.md | `src/client/renderer.js` 是纯 ESM 纯函数模块：导出 `renderViewSpec` / `renderFragment` / `escapeHtml` / `COMPONENT_TYPES`，可在 Node 中直接 import，全程不触碰 DOM。 | `test/client-ui.test.ts` · renderer.js 是纯 ESM 纯函数模块：四个导出齐全且不触碰 DOM |
+| **UI-002** | specs/012-client-ui.md | `COMPONENT_TYPES` 与 `src/surface/viewspec.ts` 的 `Object.keys(COMPONENT_SPECS)` 完全一致（顺序与元素），且 8 种组件都有渲染实现、不会落进未知占位块。 | `test/client-ui.test.ts` · 组件词汇表与 src/surface/viewspec.ts 的 COMPONENT_SPECS 完全一致，8 种组件都有实现 |
+| **UI-003** | specs/012-client-ui.md | `renderViewSpec` 输出自包含 HTML 文档（内联 `--ac-*` 令牌、无外部依赖），`renderFragment` 输出不带外壳的片段，且所有文本与属性值（含 `data-emit`）都被转义。 | `test/client-ui.test.ts` · renderViewSpec 输出自包含 HTML，renderFragment 输出片段，文本与属性全部转义 |
+| **UI-004** | specs/012-client-ui.md | 未知组件降级为 `data-unknown-component` 占位块、非法节点与超深嵌套降级为 `data-invalid-spec`，对任意输入都不抛异常、不白屏，兄弟组件照常渲染。 | `test/client-ui.test.ts` · 未知组件与非法节点降级为占位块：不抛异常、不白屏、兄弟组件照常渲染 |
+| **UI-005** | specs/012-client-ui.md | `index.html` + `style.css` 构成离线深色单页：不引任何远程资源，含顶部栏 / 对话栏 / 界面面板 / 检查器四区与全部必需元素 id，使用 `#05060a` 背景、`#22d3ee` 与 `#a78bfa` 强调色与 `PingFang SC` 字体栈。 | `test/client-ui.test.ts` · index.html + style.css 是离线深色单页，四区与必需元素齐全 |
+| **UI-006** | specs/012-client-ui.md | 界面面板用 `<iframe sandbox="allow-scripts" srcdoc>` 承载服务端 HTML；`document` 事件只更新 `srcdoc` 与版本号，宿主页面不刷新（无 `location.reload` / `document.write`）。 | `test/client-ui.test.ts` · 界面面板是 sandbox iframe srcdoc，document 事件只更新 srcdoc 而不刷新页面 |
+| **UI-007** | specs/012-client-ui.md | `app.js` 用 `EventSource('/api/stream')` 订阅并处理 `state` / `frame` / `document` / `done` 四类事件，通过 `POST` 调用 `/api/message`、`/api/interrupt`、`/api/rollback`；在 Node 中 import 无副作用，`normalizeState` 对缺字段的坏输入退化为空。 | `test/client-ui.test.ts` · app.js 订阅 /api/stream 处理四类事件，并用 POST 调 message / interrupt / rollback |
+| **UI-008** | specs/012-client-ui.md | 对话流把人类消息靠右、`agent.thinking` 靠左，工具调用渲染成「谁 · 调了什么 · ok/失败」的摘要行，时间线按事件类型上色，且所有进入 DOM 的文本都经过 `escapeHtml`。 | `test/client-ui.test.ts` · 对话流：人类靠右、thinking 靠左、工具调用是可读摘要行，所有文本都转义 |
 
 ## 统计
 
-- 验收标准：**113** 条
-- 已覆盖：**113** 条
+- 验收标准：**133** 条
+- 已覆盖：**133** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

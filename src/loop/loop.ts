@@ -23,7 +23,8 @@ export interface ToolCall {
 
 export interface UiPatch {
   scope: string;
-  op: 'patch' | 'replace' | 'mount';
+  /** upsert = 有没有都画成这样（Agent 的默认粒度），其余三种见 SPEC-006 */
+  op: 'patch' | 'replace' | 'mount' | 'upsert';
   spec: Record<string, unknown>;
 }
 
@@ -131,6 +132,11 @@ export interface LoopOptions {
   /** 宿主工具桥；没有它则宿主工具一律 NO_HOST_BRIDGE */
   hostBridge?: HostBridgePort;
   hostToolTimeoutMs?: number;
+  /**
+   * 历史上下文（由事件日志投影而来）。
+   * 放在 system 之后、本轮 seed 之前——多轮对话的记忆就靠它，而不是进程里的一个数组。
+   */
+  seedContext?: ContextItem[];
   budget?: LoopBudget;
   system?: string;
   maxContextItems?: number;
@@ -193,6 +199,7 @@ export class AgentLoop {
 
     const baseContext: ContextItem[] = [];
     if (this.#options.system !== undefined) baseContext.push({ role: 'system', text: this.#options.system });
+    for (const item of this.#options.seedContext ?? []) baseContext.push(item);
     if (input.seed !== undefined) baseContext.push({ role: 'human', text: input.seed });
 
     let turn = 0;

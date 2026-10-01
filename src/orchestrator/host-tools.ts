@@ -147,7 +147,8 @@ export function createHostTools(): HostTool[] {
       description: '把一份 View Spec 经校验后落进界面文档，返回版本号',
       async run(args, runtime, caller) {
         const scope = asString(args.scope);
-        const op = asString(args.op, 'mount');
+        // 默认 upsert：Agent 通常不知道这个 scope 是否已经存在，别让它为此失败一轮
+        const op = asString(args.op, 'upsert');
         if (scope === '') return fail('INVALID_ARGS: ui.render 需要 scope');
 
         const result = runtime.ingest.ingest({ scope, op, spec: args.spec });

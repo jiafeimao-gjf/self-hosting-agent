@@ -100,3 +100,4 @@ node -e "import('./src/surface/viewspec.ts').then(async (m) => { const fs = awai
 - **SURF-010** `ViewDocument.applyPatch` 按 scope 维护区块，支持 `mount` / `replace` / `patch` 三种粒度；非法变更返回错误码且不改变文档。
 - **SURF-011** 版本号单调递增：每次成功变更 +1、失败不变；`rollback(version)` 回到任意历史版本的界面内容并产生新的递增版本。
 - **SURF-012** `ViewDocument.render()` 输出整页 HTML，包含全部 scope 区块并保持转义。
+- **SURF-013** 第四种粒度 `upsert`：scope 不存在则挂载、已存在则整块替换，**不做存在性检查**。真模型第一次渲染时无从知道 scope 是否存在，这是它该用的默认粒度（否则它必然浪费一轮去猜）。

@@ -416,6 +416,44 @@ test('没有宿主桥时调用宿主工具 → NO_HOST_BRIDGE，Loop 不崩', as
   assert.match(String(failure?.error), /NO_HOST_BRIDGE/);
 });
 
+// @spec LOOP-015
+test('seedContext 把历史上下文喂进模型输入，且不重复本轮消息', async () => {
+  const seen: ContextItem[][] = [];
+  const model = {
+    async step(input: ModelInput): Promise<ModelOutput> {
+      seen.push(input.context);
+      if (seen.length === 1) return { toolCalls: [{ id: 'c1', name: 'echo', args: {} }] };
+      return { done: true };
+    },
+  };
+
+  const loop = new AgentLoop({
+    agentId: 'lead',
+    model,
+    tools: [defineTool('echo', async () => 'ok')],
+    log: tempLog(),
+    sink: collector().sink,
+    system: '你是 Lead',
+    seedContext: [
+      { role: 'human', text: '第一轮：你好' },
+      { role: 'assistant', text: '第一轮：我在' },
+    ],
+  });
+
+  await loop.run({ seed: '第二轮：继续' });
+
+  const first = seen[0] ?? [];
+  assert.deepEqual(
+    first.map((item) => item.text),
+    ['你是 Lead', '第一轮：你好', '第一轮：我在', '第二轮：继续'],
+  );
+  assert.equal(
+    first.filter((item) => item.text === '第二轮：继续').length,
+    1,
+    '本轮消息只能出现一次，不能既当 seed 又从 inbox 灌进来',
+  );
+});
+
 // @spec LOOP-010
 test('上下文按预算裁剪：保留系统提示与最近条目', () => {
   const items: ContextItem[] = [{ role: 'system', text: '你是 Lead' }];

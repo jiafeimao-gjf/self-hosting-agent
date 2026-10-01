@@ -12,7 +12,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { EventLog } from '../eventlog/log.ts';
-import type { EventAppender } from '../eventlog/log.ts';
+import type { EventAppender, LoggedEvent } from '../eventlog/log.ts';
 import { AgentPool } from '../kernel/pool.ts';
 import type { AgentProcess } from '../kernel/pool.ts';
 import { ApprovalGate } from '../kernel/approval.ts';
@@ -46,6 +46,8 @@ export interface SpawnAgentOptions {
   /** 模拟模型延迟：用来观察中断、超时与「慢队友」 */
   stepDelayMs?: number;
   hostToolTimeoutMs?: number;
+  /** 透传给子进程的环境变量（例如 AGENT_MODEL / AGENT_BASE_URL 切真模型） */
+  env?: Record<string, string>;
 }
 
 export interface OrchestrationResult {
@@ -95,6 +97,15 @@ export class TeamRunner implements HostRuntime {
     return this.pool.list();
   }
 
+  /**
+   * 某个 Agent 自己的事件日志。
+   * 它的对话上下文就是这么投影出来的（agent-main 用的是同一份），
+   * 所以宿主想给人类看「Agent 现在记得什么」，读这里最诚实。
+   */
+  agentEvents(agentId: string): LoggedEvent[] {
+    return new EventLog({ dir: path.join(this.dir, 'agents', agentId) }).read();
+  }
+
   /** 拉起一个 Agent，并把父子关系、宿主工具、帧处理都接好 */
   spawnAgent(agentId: string, options: SpawnAgentOptions = {}): { agentId: string; pid: number | undefined } {
     const script = options.script ?? this.#scripts[agentId];
@@ -105,6 +116,7 @@ export class TeamRunner implements HostRuntime {
       ...(script === undefined ? {} : { script }),
       ...(options.stepDelayMs === undefined ? {} : { stepDelayMs: options.stepDelayMs }),
       ...(options.hostToolTimeoutMs === undefined ? {} : { hostToolTimeoutMs: options.hostToolTimeoutMs }),
+      ...(options.env === undefined ? {} : { env: options.env }),
     });
 
     if (options.parent !== undefined) {
@@ -131,6 +143,13 @@ export class TeamRunner implements HostRuntime {
       try {
         handle.send(toPeerFrame(message));
         delivered += 1;
+        this.log.append({
+          type: 'mail.message',
+          from: message.from,
+          to: message.to,
+          kind: message.kind,
+          body: message.body,
+        });
       } catch {
         // 进程刚好死了：消息已经在邮箱里落过盘，等它下次上线
         break;

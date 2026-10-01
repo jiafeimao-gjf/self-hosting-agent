@@ -18,10 +18,16 @@ import { escapeHtml, renderFragment } from './renderer.ts';
 import { validateViewSpec } from './viewspec.ts';
 import type { ViewSpec } from './viewspec.ts';
 
-export type PatchOp = 'patch' | 'replace' | 'mount';
+export type PatchOp = 'patch' | 'replace' | 'mount' | 'upsert';
 
-/** patch 的三种粒度 */
-export const PATCH_OPS: readonly PatchOp[] = ['mount', 'replace', 'patch'];
+/**
+ * patch 的四种粒度。
+ *
+ * `upsert` 是给 Agent 用的默认粒度：「把这块界面画成这样，在不在我不管」。
+ * 加它不是因为好看——是因为真模型第一次渲染时根本不知道 scope 存不存在，
+ * 用 mount/replace 必然有一次会失败，于是它会浪费一整轮去猜。
+ */
+export const PATCH_OPS: readonly PatchOp[] = ['upsert', 'mount', 'replace', 'patch'];
 
 export interface ViewPatch {
   scope: string;
@@ -178,7 +184,8 @@ export class ViewDocument {
     if (op === 'mount' && exists) {
       return { ok: false, error: { code: 'SCOPE_EXISTS', message: `scope ${scope} 已存在，不能重复 mount` } };
     }
-    if (op !== 'mount' && !exists) {
+    // upsert 不做存在性检查：它就是「有没有都画成这样」
+    if (op !== 'mount' && op !== 'upsert' && !exists) {
       return { ok: false, error: { code: 'SCOPE_NOT_FOUND', message: `scope ${scope} 不存在，无法 ${op}` } };
     }
 

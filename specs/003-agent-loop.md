@@ -62,3 +62,4 @@ interface HostBridgePort {
 - **LOOP-012** 宿主回填：收到 `tool.reply` 后必须成对发出 `tool.result`，`result` / `error` 原样透传，并写入事件日志。
 - **LOOP-013** 宿主工具失败不致命：超时、被中断、回填 `ok:false` 都只产生 `tool.result{ok:false}`，Loop 继续到下一轮。
 - **LOOP-014** 没有接到宿主桥时调用宿主工具 → `tool.result{ok:false}` 且错误信息含 `NO_HOST_BRIDGE`，Loop 不崩。
+- **LOOP-015** `seedContext` 提供的历史上下文会进入模型输入（顺序：system → 历史 → 本轮 seed），且本轮消息不会重复注入。

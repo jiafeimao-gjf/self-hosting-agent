@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Agent Client · Surface</title>
+    <!-- 离线单页：只引用本服务 src/client/ 下的静态资源，不引任何 CDN / 远程字体 -->
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <!-- 顶部栏：标题、连接状态、界面版本、回滚、中断 -->
+    <header class="topbar">
+      <h1 class="brand">Agent Client</h1>
+      <span class="brand-sub">界面由 Agent 亲手改造</span>
+      <span id="conn" class="conn" data-state="connecting" aria-live="polite">连接中…</span>
+      <span class="version-chip">界面版本 <b id="version">v0</b></span>
+      <button id="rollback" class="btn" type="button" title="把界面文档退回指定版本">回滚</button>
+      <button id="interrupt" class="btn btn-danger" type="button" title="人类夺权，让当前一轮停在最近边界">中断</button>
+    </header>
+
+    <main class="grid">
+      <!-- 左栏：对话 -->
+      <section class="zone zone-chat" aria-label="对话">
+        <div class="zone-head"><h2>对话</h2><span class="hint">回车发送 · Shift+回车换行</span></div>
+        <ol id="messages" class="messages"></ol>
+        <form id="composer" class="composer" autocomplete="off">
+          <textarea id="input" class="input" rows="2" placeholder="跟 Agent 说点什么…" aria-label="人类输入"></textarea>
+          <button id="send" class="btn btn-primary" type="submit">发送</button>
+        </form>
+      </section>
+
+      <!-- 右栏上：界面面板（Agent 产出的界面在这里的沙箱里活着） -->
+      <section class="zone zone-surface" aria-label="界面面板">
+        <div class="zone-head">
+          <h2>界面面板</h2>
+          <span class="hint">sandbox iframe · srcdoc 实时更新，不刷新页面</span>
+          <span class="version-chip">沙箱 <b id="surface-version">v0</b></span>
+        </div>
+        <div class="surface-frame">
+          <iframe
+            id="surface"
+            class="surface"
+            title="Agent 界面沙箱"
+            sandbox="allow-scripts"
+            srcdoc=""
+          ></iframe>
+        </div>
+      </section>
+
+      <!-- 右栏下：检查器 -->
+      <section class="zone zone-inspector" aria-label="检查器">
+        <div class="zone-head"><h2>检查器</h2><span class="hint">进程表 · 任务板 · 事件时间线</span></div>
+        <div class="inspector">
+          <div class="card">
+            <h3 class="card-title">Agent 进程表</h3>
+            <div id="agents" class="agents"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">任务板</h3>
+            <div id="tasks" class="tasks"></div>
+          </div>
+          <div class="card">
+            <h3 class="card-title">事件时间线</h3>
+            <ol id="timeline" class="timeline"></ol>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <script type="module" src="/app.js"></script>
+  </body>
+</html>

@@ -65,7 +65,7 @@ test('宿主 send(human.message) 后子进程跑完 Loop 并回传 loop.done', a
 
     assert.match(String((await thinking).text), /把预算显示成进度条/);
     assert.equal((await toolCall).name, 'budget');
-    assert.equal((await patch).scope, 'surface.sidebar');
+    assert.match(String((await patch).scope), /^surface\./, '界面改动必须落在 surface.* 的 scope 上');
     assert.equal((await done).reason, 'completed');
   } finally {
     await pool.shutdown();

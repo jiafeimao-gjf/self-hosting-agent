@@ -293,6 +293,30 @@ test('磁盘上的 view-spec.schema.json 与代码生成的 schema 完全一致�
   assert.equal(panelSchema.properties.children.items.$ref, '#/$defs/viewSpec');
 });
 
+// @spec SURF-013
+test('upsert 粒度：不存在则挂载、已存在则整块替换，不做存在性检查', () => {
+  const doc = new ViewDocument();
+
+  const first = doc.applyPatch({ scope: 'surface.main', op: 'upsert', spec: { type: 'text', text: '第一版' } });
+  assert.equal(first.ok, true);
+  assert.equal(first.ok === true && first.version, 1);
+  assert.deepEqual(doc.getScope('surface.main'), { type: 'text', text: '第一版' });
+
+  const second = doc.applyPatch({ scope: 'surface.main', op: 'upsert', spec: { type: 'text', text: '第二版' } });
+  assert.equal(second.ok, true);
+  assert.equal(second.ok === true && second.version, 2);
+  assert.deepEqual(doc.getScope('surface.main'), { type: 'text', text: '第二版' });
+
+  // 这正是 mount/replace 做不到的事：同一个调用，第一次和第二次都成功
+  const exists = doc.applyPatch({ scope: 'surface.main', op: 'mount', spec: { type: 'text', text: 'x' } });
+  assert.equal(exists.ok === false && exists.error.code, 'SCOPE_EXISTS');
+
+  // 非法 spec 依旧整笔作废
+  const bad = doc.applyPatch({ scope: 'surface.other', op: 'upsert', spec: { type: '不存在的组件' } });
+  assert.equal(bad.ok, false);
+  assert.equal(doc.version, 2);
+});
+
 // @spec SURF-010
 test('applyPatch 支持 mount / replace / patch 三种粒度，非法变更不改文档', () => {
   const doc = new ViewDocument();

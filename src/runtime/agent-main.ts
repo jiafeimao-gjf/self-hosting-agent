@@ -22,6 +22,7 @@ import type {
 import { EventLog } from '../eventlog/log.ts';
 import { scriptedModel } from '../loop/fake-model.ts';
 import { createHttpModel } from '../loop/http-model.ts';
+import { projectConversation } from './conversation.ts';
 
 function parseArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -64,22 +65,34 @@ function demoModel(): ModelPort {
           usage: { tokens: 42 },
         };
       }
-      return {
-        text: '数据到手，我把它做成进度条放到侧边栏——这一步是在改我自己的界面。',
-        uiPatches: [
+      // 用人类这句话算一个稳定的数，让每次对话界面都有变化（演示用）
+      const seed = [...lastHuman].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+      const value = Number((0.25 + (seed % 60) / 100).toFixed(2));
+      const panel = {
+        type: 'panel',
+        title: `Agent 的界面 · ${lastHuman.slice(0, 14)}`,
+        children: [
           {
-            scope: 'surface.sidebar',
-            op: 'mount',
-            spec: {
-              type: 'panel',
-              title: '今日预算',
-              children: [
-                { type: 'progress', label: 'token', value: 0.62, tone: 'warning' },
-                { type: 'action', label: '提高上限', emit: 'ui.event:raise_budget' },
-              ],
-            },
+            type: 'progress',
+            label: '占用',
+            value,
+            tone: value > 0.75 ? 'danger' : value > 0.55 ? 'warning' : 'success',
           },
+          {
+            type: 'kv',
+            pairs: [
+              { key: '需求', value: lastHuman.slice(0, 24) },
+              { key: '模型', value: '内置演示模型' },
+              { key: '界面版本', value: '每次对话都会前进' },
+            ],
+          },
+          { type: 'action', label: '再来一句', emit: 'ui.event:again' },
         ],
+      };
+
+      return {
+        text: '我把结果画到右边了——这块界面就是我发过去的 View Spec。',
+        uiPatches: [{ scope: 'surface.main', op: 'upsert', spec: panel }],
         done: true,
         usage: { tokens: 58 },
       };
@@ -107,11 +120,30 @@ const HOST_TOOL_DESCRIPTIONS: Record<string, string> = {
   'agent.spawn': '拉起一个新的 Agent 子进程（需要人类审批）并投递 brief。参数：agentId, brief',
   'agent.send': '经邮箱把消息投递给另一个 Agent。参数：to, body',
   'agent.wait': '等到列出的 Agent 都回报。参数：ids, timeoutMs',
-  'ui.render': '把一份 View Spec 经校验后落进界面文档。参数：scope, op(mount|replace|patch), spec',
+  // 真模型不看源码，只能靠这段描述学会「界面能长什么样」——写细一点，界面才不会长歪
+  'ui.render':
+    '把一份 View Spec 落进人类眼前的界面面板（会立刻更新）。参数：scope(如 surface.main)、op(默认 upsert：有没有都画成这样；也可用 mount/replace/patch)、spec。' +
+    'spec 必须是：{type:"panel", title:"标题", children:[...]}。可用组件（字段名必须完全一致）：' +
+    'text{text} | progress{label, value:0~1, tone?} | action{label, emit} | list{items:["..."]} | ' +
+    'kv{pairs:[{key, value}]} | columns{children:[...]} | badge{text, tone?} | panel{title?, children}。' +
+    'tone 可选：default|muted|strong|info|success|warning|danger。一屏放一件事，不要把长文塞进界面。',
   'task.create': '在任务板上建任务。参数：id?, subject, description?, writeScopes?, blockedBy?',
   'task.claim': 'CAS 认领任务。参数：id, expectedRevision?',
   'task.complete': 'CAS 完成任务。参数：id, expectedRevision?',
 };
+
+/** 说话的对象是人类，不是日志——这段话决定了客户端好不好用 */
+const SYSTEM_PROMPT = [
+  '你是这个 Agent 客户端里的 Lead Agent，是人类唯一的对话者。',
+  '你的每句话都会显示在人类眼前的对话面板里，你画的界面会显示在旁边的界面面板里。',
+  '',
+  '工作方式：',
+  '1. 先弄清人类要什么。不确定就直接问，不要编造数据。',
+  '2. 需要在界面上展示结果时，调用 ui.render 把界面画出来——人类会立刻看到，不需要刷新。',
+  '3. 回复用中文、短句、说结论。长内容放进界面里，而不是堆在对话里。',
+  '4. 只有确实需要并行干活时，才用 agent.spawn 拉起队友（这会请求人类审批）。',
+  '5. 做完一件事，用一句话告诉人类你做了什么、下一步建议什么。',
+].join('\n');
 
 const tools: ToolSpec[] = [
   defineTool('budget', (toolArgs) => ({ range: toolArgs.range ?? 'today', used: 620000, limit: 1000000 }), '读取预算'),
@@ -180,7 +212,21 @@ function send(frame: Frame): void {
   }
 }
 
+/**
+ * 模型端口只建一次并全程复用。
+ *
+ * 关键点：剧本是**这个 Agent 的会话剧本**，不是「每一轮都从头念」——
+ * 否则第二次说话时它会重复第一句，多轮对话直接坏掉。
+ */
+let cachedModel: ModelPort | undefined;
+
 function makeModel(): ModelPort {
+  if (cachedModel !== undefined) return cachedModel;
+  cachedModel = buildModel();
+  return cachedModel;
+}
+
+function buildModel(): ModelPort {
   if (args.script !== undefined) {
     const script = JSON.parse(args.script) as ModelOutput[];
     return withDelay(scriptedModel(script), stepDelayMs);
@@ -227,9 +273,11 @@ async function runOnce(): Promise<void> {
     sink: { onFrame: send },
     hostBridge,
     hostToolTimeoutMs,
-    system: '你是 Lead Agent：唯一与人类对话的进程，负责拆解、执行与收口。',
-    maxContextItems: 40,
-    budget: { maxTurns: 8, maxToolCalls: 20, maxTokens: 200000, maxWallClockMs: 120000 },
+    system: SYSTEM_PROMPT,
+    // 历史上下文来自事件日志投影：进程重启也不丢
+    seedContext: projectConversation(log.read()),
+    maxContextItems: 60,
+    budget: { maxTurns: 12, maxToolCalls: 40, maxTokens: 400000, maxWallClockMs: 600000 },
   });
   currentLoop = loop;
   send({ t: 'loop.state', state: 'running' });

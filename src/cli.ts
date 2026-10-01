@@ -13,6 +13,8 @@ import { EventLog } from './eventlog/log.ts';
 import { ApprovalGate } from './kernel/approval.ts';
 import { AgentPool } from './kernel/pool.ts';
 import { TeamRunner } from './orchestrator/team.ts';
+import { ClientSession } from './server/session.ts';
+import { startServer } from './server/http-server.ts';
 import { ViewDocument } from './surface/document.ts';
 import { SurfaceIngest } from './surface/ingest.ts';
 import { validateViewSpec } from './surface/viewspec.ts';
@@ -216,10 +218,82 @@ async function runTeam(argv: string[]): Promise<number> {
   return 0;
 }
 
+/** 探一下模型端点是否活着（默认 Ollama），别让人类打开页面才发现连不上 */
+async function probeEndpoint(baseUrl: string): Promise<boolean> {
+  try {
+    const response = await fetch(`${baseUrl.replace(/\/$/, '')}/models`, {
+      signal: AbortSignal.timeout(1500),
+    });
+    return response.ok;
+  } catch {
+    return false;
+  }
+}
+
+async function runServe(argv: string[]): Promise<number> {
+  const args = parseArgs(argv);
+  const cwd = process.cwd();
+  const dir = args.dir ?? path.join(cwd, '.agent-client', 'client');
+  const port = Number(args.port ?? process.env.PORT ?? 4311);
+  const choice = args.model ?? process.env.AGENT_MODEL_CHOICE ?? 'auto';
+
+  let agentEnv: Record<string, string> = {};
+  let modelLabel: string;
+
+  const baseUrl = args['base-url'] ?? process.env.AGENT_BASE_URL ?? 'http://127.0.0.1:11434/v1';
+  const modelName = args['model-name'] ?? process.env.AGENT_MODEL_NAME ?? 'qwen3:4b';
+
+  if (choice === 'demo') {
+    modelLabel = '内置演示模型（确定性、秒回、不需要任何模型服务）';
+  } else if (choice === 'auto' && !(await probeEndpoint(baseUrl))) {
+    modelLabel = `没找到 ${baseUrl}，用内置演示模型（想接真模型：--model http --base-url ... --model-name ...）`;
+  } else {
+    agentEnv = {
+      AGENT_MODEL: 'http',
+      AGENT_BASE_URL: baseUrl,
+      AGENT_API_KEY: args['api-key'] ?? process.env.AGENT_API_KEY ?? 'ollama',
+      AGENT_MODEL_NAME: modelName,
+      // 本机小模型会「边想边说」，给足时间；人类随时可以按中断
+      AGENT_MODEL_TIMEOUT: args['model-timeout'] ?? process.env.AGENT_MODEL_TIMEOUT ?? '180000',
+    };
+    modelLabel = `${modelName} @ ${baseUrl}`;
+  }
+
+  fs.mkdirSync(dir, { recursive: true });
+  const session = new ClientSession({ dir, agentEnv });
+  const server = await startServer({ session, port });
+
+  console.log('Agent Client · 可用态\n');
+  console.log(`  打开：${server.url}`);
+  console.log(`  模型：${modelLabel}`);
+  console.log(`  数据：${dir}`);
+  console.log('\n  在页面里说话，Agent 会一边回你，一边把它自己的界面改给你看。Ctrl+C 退出。\n');
+
+  const shutdown = async (): Promise<void> => {
+    console.log('\n正在回收 Agent 进程…');
+    await server.close();
+    await session.close();
+    process.exit(0);
+  };
+  process.on('SIGINT', () => void shutdown());
+  process.on('SIGTERM', () => void shutdown());
+
+  // 常驻：不 resolve，等信号
+  return new Promise<number>(() => {});
+}
+
 const command = process.argv[2];
 const rest = process.argv.slice(3);
 
-if (command === 'render') {
+if (command === 'serve') {
+  runServe(rest).then(
+    (code) => process.exit(code),
+    (err: unknown) => {
+      console.error(`✖ serve 失败：${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      process.exit(1);
+    },
+  );
+} else if (command === 'render') {
   process.exit(runRender(rest));
 } else if (command === 'team') {
   runTeam(rest).then(
