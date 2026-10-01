@@ -1,5 +1,5 @@
 /*
- * SPEC-012 §2 客户端样式：深色科技风。
+ * SPEC-012 §2 客户端样式：深色科技风；SPEC-014 补上变更横幅与「客户端源码」区。
  *
  * 只使用本地字体栈（无远程字体）与纯 CSS 规则（不加载任何外部样式表），
  * 保证整页离线可用。强调色：青色 #22d3ee、紫色 #a78bfa。
@@ -442,9 +442,26 @@ body {
   overflow: hidden;
 }
 
-.card:last-child {
+/* SPEC-014 §4：检查器四格 —— 左列进程表 / 任务板，右列事件时间线 / 客户端源码。
+   改用稳定的 card-* 类定位：`:last-child` 在新增第 4 张卡后会指错元素。 */
+.card-agents {
+  grid-column: 1;
+  grid-row: 1;
+}
+
+.card-tasks {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.card-timeline {
   grid-column: 2;
-  grid-row: 1 / span 2;
+  grid-row: 1;
+}
+
+.card-sources {
+  grid-column: 2;
+  grid-row: 2;
 }
 
 .card-title {
@@ -460,7 +477,8 @@ body {
 
 .agents,
 .tasks,
-.timeline {
+.timeline,
+.sources {
   flex: 1;
   min-height: 0;
   margin: 0;
@@ -476,13 +494,33 @@ body {
 
 .agent-row,
 .task-row,
-.ev {
+.ev,
+.source-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 4px 0;
   border-bottom: 1px dashed rgba(30, 42, 68, 0.8);
   word-break: break-all;
+}
+
+/* ---------- 检查器 · 客户端源码（SPEC-014 §4） ---------- */
+
+.source-path {
+  flex: 1;
+  min-width: 0;
+  color: var(--text);
+}
+
+.source-bytes,
+.source-versions {
+  flex: none;
+  color: var(--text-muted);
+  font-size: 11px;
+}
+
+.source-versions {
+  color: var(--violet);
 }
 
 .ev-type {
@@ -573,6 +611,69 @@ body {
   color: var(--danger);
 }
 
+/* ---------- 客户端源码变更横幅（SPEC-014 §3） ---------- */
+
+/* 固定浮层：不参与 .grid 的 100vh 计算，出现 / 消失都不会让界面跳动 */
+.change-banner {
+  position: fixed;
+  top: 64px;
+  left: 50%;
+  z-index: 30;
+  width: min(880px, calc(100vw - 32px));
+  transform: translateX(-50%);
+  border: 1px solid rgba(34, 211, 238, 0.45);
+  border-radius: var(--radius);
+  background: rgba(11, 16, 28, 0.97);
+  box-shadow: 0 14px 34px rgba(0, 0, 0, 0.55);
+  backdrop-filter: blur(8px);
+}
+
+.change-banner[hidden] {
+  display: none;
+}
+
+.change-banner[data-kind="revert"] {
+  border-color: rgba(251, 191, 36, 0.5);
+}
+
+.change-inner {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  padding: 10px 14px;
+}
+
+.change-badge {
+  flex: none;
+  padding: 1px 8px;
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+}
+
+.change-text {
+  font-weight: 600;
+}
+
+.change-reason {
+  max-width: 320px;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.change-meta {
+  margin-left: auto;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
 @media (max-width: 900px) {
   .grid {
     grid-template-columns: minmax(0, 1fr);
@@ -590,10 +691,14 @@ body {
 
   .inspector {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: repeat(3, minmax(0, 1fr));
+    grid-template-rows: repeat(4, minmax(0, 1fr));
   }
 
-  .card:last-child {
+  /* 窄屏单列：四张卡都回到自动排版 */
+  .card-agents,
+  .card-tasks,
+  .card-timeline,
+  .card-sources {
     grid-column: 1;
     grid-row: auto;
   }

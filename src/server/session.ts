@@ -9,12 +9,16 @@ import path from 'node:path';
 
 import { TeamRunner } from '../orchestrator/team.ts';
 import type { SpawnAgentOptions } from '../orchestrator/team.ts';
+import { ClientSource } from '../orchestrator/client-source.ts';
+import type { SelfTestResult } from '../orchestrator/self-test.ts';
+import { EventLog } from '../eventlog/log.ts';
+import type { ApprovalGate } from '../kernel/approval.ts';
 import { projectConversation } from '../runtime/conversation.ts';
 import type { ContextItem } from '../loop/loop.ts';
 import type { Frame } from '../protocol/frames.ts';
 import type { LoggedEvent } from '../eventlog/log.ts';
 
-export type SessionEventType = 'state' | 'frame' | 'document' | 'done';
+export type SessionEventType = 'state' | 'frame' | 'document' | 'done' | 'client.changed';
 
 export interface SessionEvent {
   type: SessionEventType;
@@ -30,6 +34,8 @@ export interface ClientState {
   tasks: Array<{ id: string; subject: string; status: string; owner: string | null; writeScopes: string[] }>;
   events: Array<{ seq: number; type: string; ts: string; summary: string }>;
   messages: Array<{ from: string; to: string; kind: string; body: string; ts: string }>;
+  /** SPEC-013：客户端自身源码（Agent 可以改的那些） */
+  sources: Array<{ path: string; bytes: number; versions: number }>;
 }
 
 export interface SessionOptions {
@@ -38,8 +44,16 @@ export interface SessionOptions {
   agentEnv?: Record<string, string>;
   /** 一次最多回多少条事件（默认 120） */
   eventTail?: number;
+  /** 复用外部事件日志（默认在 dir 下自建） */
+  log?: EventLog;
   /** 固定 Lead 的剧本/延迟：确定性演示与测试用（不传就跑真模型） */
   lead?: SpawnAgentOptions;
+  /** 可改的客户端源码根目录（默认 <cwd>/src/client）；传 null 表示不启用自举 */
+  clientRoot?: string | null;
+  /** 自检器注入点（测试用假实现，避免每次都跑真测试） */
+  selfTest?: (input: { changed: string[] }) => Promise<SelfTestResult>;
+  /** 审批门（默认拒绝；`serve` 会用「人类在旁边看着」的策略） */
+  approval?: ApprovalGate;
 }
 
 export class ClientSession {
@@ -59,10 +73,46 @@ export class ClientSession {
     this.#agentEnv = options.agentEnv ?? {};
     this.#lead = options.lead ?? {};
     this.#eventTail = options.eventTail ?? 120;
+
+    const clientRoot =
+      options.clientRoot === null
+        ? undefined
+        : (options.clientRoot ?? path.join(process.cwd(), 'src', 'client'));
+
+    // 事件日志先建好，源码管理器与 runner 共用同一份（审计只有一个来源）
+    const log = options.log ?? new EventLog({ dir: path.join(this.dir, 'events') });
+
+    // P3：接上源码管理器，Agent 才能改自己的界面代码（且必须过自检门禁）
+    const clientSource =
+      clientRoot === undefined
+        ? undefined
+        : new ClientSource({
+            root: clientRoot,
+            historyDir: path.join(this.dir, 'client-history'),
+            projectRoot: process.cwd(),
+            log,
+            ...(options.selfTest === undefined ? {} : { selfTest: options.selfTest }),
+          });
+
     this.runner = new TeamRunner({
       dir: this.dir,
+      log,
+      ...(options.approval === undefined ? {} : { approval: options.approval }),
       onFrame: (agentId, frame) => this.#onFrame(agentId, frame),
+      ...(clientSource === undefined ? {} : { clientSource }),
+      onClientChanged: (payload) => {
+        this.#emit({ type: 'client.changed', data: payload });
+        this.#emit({ type: 'state', data: this.state() });
+      },
     });
+  }
+
+  get log(): EventLog {
+    return this.runner.log;
+  }
+
+  get clientSource(): ClientSource | undefined {
+    return this.runner.clientSource;
   }
 
   /** 拉起 Lead。幂等：重复调用不会起第二个。 */
@@ -110,6 +160,28 @@ export class ClientSession {
     return { ok: true };
   }
 
+  /**
+   * 客户端源码回滚：人类不必经过 Agent 就能撤销它对自己代码的改动。
+   * 这是「永远能夺回控制权」这条底线在自举场景下的落点。
+   */
+  revertClient(path: string, version?: number): { ok: boolean; version?: number; error?: string } {
+    const source = this.runner.clientSource;
+    if (source === undefined) return { ok: false, error: 'CLIENT_SOURCE_DISABLED' };
+
+    const reverted = source.revert(path, version);
+    if (!reverted.ok) return { ok: false, error: `${reverted.error.code}: ${reverted.error.message}` };
+
+    this.runner.onClientChanged?.({
+      kind: 'revert',
+      path,
+      reason: `人类手动回滚（撤销 v${reverted.value.restoredFrom}）`,
+      version: reverted.value.version,
+      selfTest: 'skipped',
+      restoredFrom: reverted.value.restoredFrom,
+    });
+    return { ok: true, version: reverted.value.version };
+  }
+
   /** 界面回滚：回到历史版本，并广播新文档 */
   rollback(version: number): { ok: boolean; version?: number; error?: string } {
     const result = this.runner.document.rollback(version);
@@ -154,6 +226,9 @@ export class ClientSession {
         ts: event.ts,
       }));
 
+    const listedSources = this.runner.clientSource?.list();
+    const sources = listedSources?.ok === true ? listedSources.value : [];
+
     return {
       busy: this.#busySince !== null,
       busySince: this.#busySince,
@@ -162,6 +237,7 @@ export class ClientSession {
       tasks,
       events,
       messages,
+      sources,
     };
   }
 

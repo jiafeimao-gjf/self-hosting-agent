@@ -8,14 +8,31 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **133** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **133 / 133** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **132** 个，全绿（约 9s，零第三方依赖） |
+| 验收标准 | **154** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **154 / 154** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **153** 个，全绿（约 9s，零第三方依赖） |
 | 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
 | P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
 | P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
 | P2 已落地 | **可用客户端**：HTTP + SSE 服务、浏览器 Surface（对话 / 沙箱界面面板 / 检查器）、事件日志投影的多轮记忆、本机 Ollama 直连 |
-| 尚未落地 | Electron/Tauri 外壳、组件热更新（HMR）、Agent 改宿主自身代码（P3） |
+| P3 已落地 | **客户端自举**：Agent 可改 `src/client/**` 自身源码，写入前跑项目自检、不过自动回滚，带版本历史 / 可读 diff / 一键回滚 / 审计，CSS 变更无刷新热替换 |
+| 尚未落地 | Electron/Tauri 外壳、人类审批 UI（当前人类在场即自动放行但全程留痕）、更细粒度的热更新（HMR） |
+
+## 自举：Agent 改自己的代码，但改坏不行
+
+在页面里说一句「**换个配色**」，会发生这些事（都已实测）：
+
+```
+Lead ──tool.call: client.write{path:'style.css', reason:'人类要求换配色'}──▶ Kernel
+                                                                          │ ① 写作用域校验：只允许 src/client/**
+                                                                          │ ② 写入 → 跑项目自检（node --check + node --test test/client-ui.test.ts）
+                                                                          │ ③ 通过 → 记版本 + 广播；失败 → 逐字节回滚
+浏览器 ◀── SSE client.changed ── 换掉 <link> 的 href ──▶ 界面当场变色，不刷新
+```
+
+实测结果：横幅显示「客户端样式已更新（style.css），已即时生效 · 人类要求换配色 · v1 · 自检 通过 · +6 / −0」，发送按钮从紫色变成蓝色；点一下人类的「回滚」按钮，文件与原样逐字节一致、颜色变回紫色、时间线留下 `client.revert`。
+
+**关键不是「Agent 能改代码」，而是「改坏留不下来」**：自检不过就回滚，且回滚是逐字节的。
 
 ## 打开就能用
 

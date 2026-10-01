@@ -287,6 +287,50 @@ test('模型不可用时客户端收到可读的错误帧，服务本身不崩',
   );
 });
 
+// @spec CLI-011
+test('POST /api/client/revert 让人类不经过 Agent 就能回滚客户端源码', async () => {
+  const clientRoot = tempDir('client-src');
+  fs.writeFileSync(path.join(clientRoot, 'style.css'), ':root { --cyan: #22d3ee; }\n', 'utf8');
+
+  const session = new ClientSession({
+    dir: tempDir('revert-session'),
+    clientRoot,
+    selfTest: async () => ({ ok: true, checks: [], output: '' }),
+    lead: { script: [{ text: 'hi', done: true }] },
+  });
+  const server = await startServer({ session, port: 0 });
+
+  try {
+    const source = session.clientSource;
+    assert.ok(source, '应当接上源码管理器');
+    const written = await source.write('style.css', ':root { --cyan: #f472b6; }\n', { reason: '换色' });
+    assert.equal(written.ok, true);
+
+    const response = await fetch(`${server.url}/api/client/revert`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'style.css' }),
+    });
+    assert.equal(response.status, 200);
+    const json = (await response.json()) as { ok: boolean };
+
+    assert.equal(fs.readFileSync(path.join(clientRoot, 'style.css'), 'utf8'), ':root { --cyan: #22d3ee; }\n');
+    assert.equal(fs.existsSync(path.join(clientRoot, 'style.css')), true);
+
+    // 越界路径同样被拒
+    const escaped = await fetch(`${server.url}/api/client/revert`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: '../package.json' }),
+    });
+    assert.equal(escaped.status, 400);
+    assert.equal(json.ok, true);
+  } finally {
+    await server.close();
+    await session.close();
+  }
+});
+
 // @spec CLI-010
 test('默认只监听 127.0.0.1，不对外暴露', async () => {
   const session = new ClientSession({ dir: tempDir('bind'), lead: { script: [{ text: 'hi', done: true }] } });

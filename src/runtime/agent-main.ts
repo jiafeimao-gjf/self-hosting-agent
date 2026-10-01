@@ -53,11 +53,38 @@ function withDelay(port: ModelPort, ms: number): ModelPort {
   };
 }
 
-/** P0 的确定性演示模型：两轮完成，含一次工具调用与一次界面改造 */
+/** 确定性演示模型：能画界面，也能在人类要求时**改自己的样式表** */
 function demoModel(): ModelPort {
+  let themeTweaked = false;
+
   return {
     async step({ turn, context }) {
       const lastHuman = [...context].reverse().find((item) => item.role === 'human')?.text ?? '（没有需求）';
+
+      // 自举演示：人类说「换配色」，Agent 就去改客户端自己的代码（改完要过自检才留得下）
+      if (!themeTweaked && /换(个|个)?(配色|颜色|主题)|配色|主题色/.test(lastHuman)) {
+        themeTweaked = true;
+        const seed = [...lastHuman].reduce((sum, char) => sum + char.charCodeAt(0), 0);
+        const palette = ['#f472b6', '#fb923c', '#4ade80', '#38bdf8', '#c084fc'];
+        const accent = palette[seed % palette.length] as string;
+        return {
+          text: `我把自己的样式表改一下：追加一条主题覆盖（${accent}）。改完会先跑项目自检，不过就自动回滚。`,
+          toolCalls: [
+            {
+              id: 'w1',
+              name: 'client.write',
+              args: {
+                path: 'style.css',
+                content: `\n/* Agent 自己追加的主题覆盖 · ${new Date().toISOString()} */\n:root {\n  --cyan: ${accent};\n  --violet: ${accent};\n}\n`,
+                reason: '人类要求换配色',
+                append: true,
+              },
+            },
+          ],
+          usage: { tokens: 66 },
+        };
+      }
+
       if (turn === 1) {
         return {
           text: `收到：${lastHuman}。先看一眼预算数据。`,
@@ -127,6 +154,12 @@ const HOST_TOOL_DESCRIPTIONS: Record<string, string> = {
     'text{text} | progress{label, value:0~1, tone?} | action{label, emit} | list{items:["..."]} | ' +
     'kv{pairs:[{key, value}]} | columns{children:[...]} | badge{text, tone?} | panel{title?, children}。' +
     'tone 可选：default|muted|strong|info|success|warning|danger。一屏放一件事，不要把长文塞进界面。',
+  'client.list': '列出客户端自身可改的源码文件（你会看到路径、字节数、已有版本数）',
+  'client.read': '读客户端自身的一个源码文件。参数：path（如 style.css / app.js）',
+  'client.write':
+    '改客户端自己的源码（限 src/client/**，会请求人类审批；写完项目自检，不通过自动回滚）。' +
+    '参数：path、content（完整内容或追加片段）、reason（为什么改，会写进审计）、append?(true 表示追加)',
+  'client.revert': '把客户端源码回滚到上一版或指定版本。参数：path, version?',
   'task.create': '在任务板上建任务。参数：id?, subject, description?, writeScopes?, blockedBy?',
   'task.claim': 'CAS 认领任务。参数：id, expectedRevision?',
   'task.complete': 'CAS 完成任务。参数：id, expectedRevision?',

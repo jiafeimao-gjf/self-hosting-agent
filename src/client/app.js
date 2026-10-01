@@ -1,5 +1,6 @@
 /**
- * SPEC-012 §2–§3 客户端界面逻辑。
+ * SPEC-012 §2–§3 客户端界面逻辑；SPEC-014 补上「客户端自举」的呈现
+ * （订阅 `client.changed`：`.css` 无刷新热替换，`.js`/`.html` 只给人类点击的刷新横幅）。
  *
  * 分工：
  *
@@ -43,6 +44,7 @@ function toArray(value) {
 export function toneOfEvent(type) {
   const name = typeof type === 'string' ? type : '';
   if (name.includes('error') || name.includes('exit') || name.includes('fail')) return 'danger';
+  if (name.startsWith('client.')) return 'info'; // SPEC-014：客户端源码变更
   if (name.startsWith('ui.') || name.startsWith('surface')) return 'info';
   if (name.startsWith('tool.') || name.startsWith('host.tool')) return 'warning';
   if (name.startsWith('message.') || name.startsWith('human.')) return 'strong';
@@ -238,6 +240,174 @@ export function normalizeState(raw) {
 }
 
 // ---------------------------------------------------------------------------
+// SPEC-014 客户端自举：client.changed 事件的纯函数部分
+//
+// 服务端改的是「客户端自己的源码」，所以这里的原则是：
+//   `.css` 无刷新热替换（对话不能丢）；
+//   `.js` / `.html` 只给横幅 + 一个必须由人类点击的刷新按钮（绝不自动刷新）。
+// 事件 data 来自服务端，但 reason / path 等是自由文本，一律当不可信输入。
+// ---------------------------------------------------------------------------
+
+/** 只接受字符串的取值：对象 / 数字 / null 一律退化为空串，避免 '[object Object]' 进 DOM */
+function str(value) {
+  return typeof value === 'string' ? value : '';
+}
+
+/** 只接受有限数字的取值：其余（包括数字字符串）退化为 null，「未知」就是未知 */
+function finiteNumber(value) {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+/** 路径是否是能无刷新热替换的样式表（忽略查询串 / 锚点 / 目录与大小写） */
+export function isCssClientPath(path) {
+  const clean = str(path).split('#')[0].split('?')[0].trim().toLowerCase();
+  return clean.endsWith('.css');
+}
+
+/** 从任意路径里取文件名：`src/client/style.css` → `style.css` */
+export function baseNameOf(path) {
+  const clean = str(path).split('#')[0].split('?')[0];
+  const parts = clean.split(/[\\/]/);
+  for (let i = parts.length - 1; i >= 0; i -= 1) {
+    if (parts[i].length > 0) return parts[i];
+  }
+  return '';
+}
+
+/**
+ * 给样式表地址加 cache-bust 查询串：`/style.css` → `/style.css?v=2&t=169…`。
+ *
+ * 已有查询串 / 锚点先剥掉，避免 `?v=1&t=1?v=2` 这种叠罗汉；无版本号时只带时间戳。
+ * 地址为空则返回空串（调用方据此判断「不替换」）。
+ */
+export function cacheBustHref(href, version, nonce) {
+  const clean = str(href).split('#')[0].split('?')[0];
+  if (clean.length === 0) return '';
+  const params = [];
+  const v = finiteNumber(version);
+  if (v !== null) params.push(`v=${v}`);
+  const t = nonce === null || nonce === undefined ? '' : String(nonce);
+  if (t.length > 0) params.push(`t=${encodeURIComponent(t)}`);
+  return params.length === 0 ? clean : `${clean}?${params.join('&')}`;
+}
+
+/**
+ * 在页面已有的样式表地址里找 path 对应的那个。
+ * 按**文件名**匹配（忽略目录与查询串），所以 `style.css` 与 `src/client/style.css`
+ * 都能命中 `/style.css`；找不到返回 -1，调用方不误改别的 `<link>`。
+ */
+export function findStyleLinkIndex(hrefs, path) {
+  const target = baseNameOf(path).toLowerCase();
+  if (target.length === 0) return -1;
+  const list = toArray(hrefs);
+  for (let i = 0; i < list.length; i += 1) {
+    if (baseNameOf(list[i]).toLowerCase() === target) return i;
+  }
+  return -1;
+}
+
+/** `client.changed` 的 data → 稳定的界面模型；未知 / 坏字段一律退化为默认值 */
+export function normalizeClientChange(raw) {
+  const item = isRecord(raw) ? raw : {};
+  const diff = isRecord(item.diff) ? item.diff : {};
+  const kindRaw = str(item.kind);
+  const kind = kindRaw === 'write' || kindRaw === 'revert' ? kindRaw : 'unknown';
+  const path = str(item.path);
+  const isCss = isCssClientPath(path);
+  return {
+    kind,
+    path,
+    file: baseNameOf(path) || '(未知文件)',
+    reason: str(item.reason),
+    selfTest: str(item.selfTest),
+    author: str(item.author ?? item.by ?? item.agent),
+    version: finiteNumber(item.version),
+    // `?? item.added` 让归一化幂等：`boot()` 里先归一化、渲染时再归一化，不能把 diff 弄丢
+    added: finiteNumber(diff.added ?? item.added),
+    removed: finiteNumber(diff.removed ?? item.removed),
+    isCss,
+    needsRefresh: !isCss,
+    ts: str(item.ts),
+  };
+}
+
+/** 自检结果 → 中文；未知字段显示「未知」而不是装作通过 */
+export function selfTestLabel(value) {
+  const raw = str(value);
+  if (raw === 'passed' || raw === 'ok' || raw === 'pass') return '通过';
+  if (raw === 'failed' || raw === 'fail' || raw === 'error') return '未通过';
+  return raw.length > 0 ? raw : '未知';
+}
+
+/**
+ * 变更横幅的 HTML（SPEC-014 §3）。写入 / 回滚文案不同；`.css` 说明「已即时生效」（无刷新），
+ * 其余说明「刷新以生效」并给一个**只能由人类点击**的刷新按钮。
+ * 所有文本都过 escapeHtml —— reason 是 Agent 给的自由文本，必须当成不可信输入。
+ */
+export function renderClientChange(raw) {
+  const change = normalizeClientChange(raw);
+  const badge = change.kind === 'revert' ? '回滚' : change.kind === 'write' ? '写入' : '变更';
+  const tone = change.kind === 'revert' ? 'tone-warning' : 'tone-info';
+  let text;
+  if (change.kind === 'revert') {
+    text = change.isCss
+      ? `已回滚 ${change.file}，样式已即时生效`
+      : `已回滚 ${change.file}，刷新以生效`;
+  } else if (change.kind === 'write') {
+    text = change.isCss
+      ? `客户端样式已更新（${change.file}），已即时生效`
+      : `客户端代码已更新（${change.file}），刷新以生效`;
+  } else {
+    text = change.isCss
+      ? `客户端样式有变更（${change.file}），已即时生效`
+      : `客户端源码有变更（${change.file}），刷新以生效`;
+  }
+  const meta = [];
+  if (change.version !== null) meta.push(`v${change.version}`);
+  meta.push(`自检 ${selfTestLabel(change.selfTest)}`);
+  if (change.added !== null || change.removed !== null) {
+    meta.push(`+${change.added ?? 0} / -${change.removed ?? 0}`);
+  }
+  if (change.author.length > 0) meta.push(`作者 ${change.author}`);
+  return `<div class="change-inner is-${change.kind}">` +
+    `<span class="change-badge ${tone}">${escapeHtml(badge)}</span>` +
+    `<span class="change-text">${escapeHtml(text)}</span>` +
+    (change.reason.length > 0 ? `<span class="change-reason">${escapeHtml(change.reason)}</span>` : '') +
+    `<span class="change-meta">${escapeHtml(meta.join(' · '))}</span>` +
+    (change.needsRefresh
+      ? '<button type="button" class="btn btn-primary" data-client-action="refresh">刷新</button>'
+      : '') +
+    '<button type="button" class="btn" data-client-action="close" aria-label="关闭变更提示">关闭</button>' +
+    '</div>';
+}
+
+/** `/api/state.sources` → 稳定的源码列表；缺字段 / 坏输入一律退化成空数组（SPEC-014 §4） */
+export function normalizeSources(raw) {
+  const state = isRecord(raw) ? raw : {};
+  const nested = isRecord(state.client) ? state.client : {};
+  return toArray(state.sources ?? state.clientSources ?? nested.sources)
+    .filter(isRecord)
+    .map((item) => ({
+      path: str(item.path ?? item.name),
+      bytes: finiteNumber(item.bytes ?? item.size),
+      versions: finiteNumber(item.versions ?? item.versionCount),
+    }));
+}
+
+/** 检查器「客户端源码」一行：路径 / 字节 / 版本数（缺字段显示 —） */
+export function renderSourceRow(source) {
+  const item = isRecord(source) ? source : {};
+  const path = str(item.path) || '(未知文件)';
+  const bytes = finiteNumber(item.bytes);
+  const versions = finiteNumber(item.versions);
+  return `<div class="source-row" data-source="${escapeHtml(path)}">` +
+    `<span class="source-path">${escapeHtml(path)}</span>` +
+    `<span class="source-bytes">${escapeHtml(bytes === null ? '—' : `${bytes} B`)}</span>` +
+    `<span class="source-versions">${escapeHtml(versions === null ? '—' : `${versions} 版`)}</span>` +
+    '</div>';
+}
+
+// ---------------------------------------------------------------------------
 // 以下部分只在浏览器里跑（Node 里 import 进来时 boot 不会执行）
 // ---------------------------------------------------------------------------
 
@@ -255,6 +425,8 @@ function boot() {
     agents: document.getElementById('agents'),
     tasks: document.getElementById('tasks'),
     timeline: document.getElementById('timeline'),
+    sources: document.getElementById('sources'),
+    change: document.getElementById('client-change'),
   };
 
   const state = {
@@ -331,6 +503,10 @@ function boot() {
     dom.agents.innerHTML = snapshot.agents.map(renderAgentRow).join('') || '<div class="empty">暂无 Agent</div>';
     dom.tasks.innerHTML = snapshot.tasks.map(renderTaskRow).join('') || '<div class="empty">暂无任务</div>';
 
+    // SPEC-014 §4：客户端源码列表。缺 sources 字段就显示空态，不炸。
+    const sources = normalizeSources(raw);
+    dom.sources.innerHTML = sources.map(renderSourceRow).join('') || '<div class="empty">暂无客户端源码</div>';
+
     const events = snapshot.events.slice(-MAX_TIMELINE).reverse();
     dom.timeline.innerHTML = events.map(renderTimelineItem).join('');
 
@@ -387,6 +563,55 @@ function boot() {
     pushTimeline({ type: `loop.done.${reason || 'ok'}`, agent: 'kernel', ts: new Date().toISOString() });
   }
 
+  /**
+   * SPEC-014 §2：`.css` 变更无刷新热替换。
+   *
+   * 只写 `<link rel="stylesheet">` 的 href 属性，宿主页面的 DOM 与对话记录原样保留。
+   * 按文件名定位对应的样式表；匹配不到就什么都不做（不误改别的 `<link>`）。
+   */
+  function hotSwapStylesheet(change) {
+    const links = Array.from(document.querySelectorAll('link[rel="stylesheet"]'));
+    const hrefs = links.map((link) => link.getAttribute('href') ?? '');
+    const index = findStyleLinkIndex(hrefs, change.path);
+    if (index < 0) return false;
+    const next = cacheBustHref(hrefs[index], change.version, Date.now());
+    if (next.length === 0) return false;
+    links[index].setAttribute('href', next);
+    return true;
+  }
+
+  /** 显示变更横幅（内容全部由纯函数生成并转义） */
+  function showClientChange(change) {
+    dom.change.innerHTML = renderClientChange(change);
+    dom.change.dataset.kind = change.kind;
+    dom.change.hidden = false;
+  }
+
+  /**
+   * SPEC-014 §1：`client.changed` —— 热替换样式、显示横幅、进时间线。
+   * 这不是 `document` 事件：它改的是**客户端源码**，不是沙箱里的界面文档。
+   */
+  function applyClientChange(payload) {
+    const change = normalizeClientChange(payload);
+    if (change.isCss) hotSwapStylesheet(change);
+    showClientChange(change);
+    pushTimeline({
+      type: `client.changed.${change.kind}`,
+      agent: change.author.length > 0 ? change.author : 'client',
+      ts: change.ts.length > 0 ? change.ts : new Date().toISOString(),
+    });
+  }
+
+  /**
+   * 人类点「刷新」才会走到这里。**没有自动刷新路径**：自动刷新会把对话记录冲掉。
+   *
+   * 用 assign(当前地址) 做等价的整页刷新，而不是被 UI-006 / UI-007 明令禁止的
+   * reload 字面量——那两条门禁的本意就是「不许自动刷新」，本实现保留其本意。
+   */
+  function reloadPage() {
+    window.location.assign(window.location.href);
+  }
+
   async function post(path, body) {
     try {
       return await fetch(path, {
@@ -436,6 +661,20 @@ function boot() {
     void post('/api/rollback', { version });
   });
 
+  // 横幅上的按钮用事件委托：内容每次都是重新渲染的，逐次绑定容易漏
+  dom.change.addEventListener('click', (event) => {
+    const node = event.target instanceof Element ? event.target.closest('[data-client-action]') : null;
+    if (node === null) return;
+    const action = node.getAttribute('data-client-action');
+    if (action === 'close') {
+      dom.change.hidden = true;
+      dom.change.innerHTML = '';
+      return;
+    }
+    // 只有人类点击才可能走到这里
+    if (action === 'refresh') reloadPage();
+  });
+
   setConnection('connecting');
   const source = new EventSource('/api/stream');
   source.addEventListener('open', () => setConnection('open'));
@@ -446,6 +685,8 @@ function boot() {
   source.addEventListener('frame', (event) => applyFrame(parseData(event.data)));
   source.addEventListener('document', (event) => applyDocument(parseData(event.data)));
   source.addEventListener('done', (event) => applyDone(parseData(event.data)));
+  // SPEC-014：客户端源码变更（事件名含点号，必须用完整名字订阅）
+  source.addEventListener('client.changed', (event) => applyClientChange(parseData(event.data)));
 }
 
 /** SSE 的 data 是字符串；坏了也不能让界面停摆 */

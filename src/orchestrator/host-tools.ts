@@ -11,6 +11,7 @@ import type { Mailbox } from '../mailbox/mailbox.ts';
 import type { TaskBoard } from '../taskboard/board.ts';
 import type { ViewDocument } from '../surface/document.ts';
 import type { SurfaceIngest } from '../surface/ingest.ts';
+import type { ClientSource } from './client-source.ts';
 
 /** 宿主工具清单：宿主与子进程两边都按这份名字对齐 */
 export const HOST_TOOL_NAMES = [
@@ -21,7 +22,22 @@ export const HOST_TOOL_NAMES = [
   'task.create',
   'task.claim',
   'task.complete',
+  'client.list',
+  'client.read',
+  'client.write',
+  'client.revert',
 ] as const;
+
+/** SPEC-013：客户端源码被改动时广播给外界（浏览器据此热更新/提示刷新） */
+export interface ClientChangedPayload {
+  kind: 'write' | 'revert';
+  path: string;
+  reason: string;
+  version: number;
+  selfTest: 'passed' | 'skipped';
+  diff?: { added: number; removed: number };
+  restoredFrom?: number;
+}
 
 export interface HostRuntime {
   log: EventAppender;
@@ -37,6 +53,9 @@ export interface HostRuntime {
   ): { agentId: string; pid: number | undefined };
   deliver(agentId: string): number;
   waitForReport(caller: string, ids: string[], timeoutMs: number): Promise<{ ok: boolean; missing: string[] }>;
+  /** P3：客户端源码管理器；没接上时 client.* 工具明确报错，而不是假装成功 */
+  clientSource?: ClientSource;
+  onClientChanged?: (payload: ClientChangedPayload) => void;
 }
 
 export interface HostToolResult {
@@ -210,6 +229,105 @@ export function createHostTools(): HostTool[] {
         const completed = runtime.board.complete(id, caller, expected);
         if (!completed.ok) return fail(`TASK_ERROR: ${completed.error.code} ${completed.error.message}`);
         return done({ id, status: completed.value.status, revision: completed.value.revision });
+      },
+    },
+    {
+      name: 'client.list',
+      description: '列出客户端自身可改的源码文件（路径、字节数、已有版本数）',
+      async run(_args, runtime) {
+        const source = runtime.clientSource;
+        if (source === undefined) return fail('CLIENT_SOURCE_DISABLED: 当前宿主没有接上客户端源码管理器');
+        const listed = source.list();
+        if (!listed.ok) return fail(`${listed.error.code}: ${listed.error.message}`);
+        return done({ files: listed.value });
+      },
+    },
+    {
+      name: 'client.read',
+      description: '读客户端自身的一个源码文件（限 src/client/**）。参数：path',
+      async run(args, runtime) {
+        const source = runtime.clientSource;
+        if (source === undefined) return fail('CLIENT_SOURCE_DISABLED: 当前宿主没有接上客户端源码管理器');
+        const read = source.read(asString(args.path));
+        if (!read.ok) return fail(`${read.error.code}: ${read.error.message}`);
+        return done(read.value);
+      },
+    },
+    {
+      name: 'client.write',
+      description:
+        '改客户端自己的源码（限 src/client/**，需要人类审批；写完会跑项目自检，不通过自动回滚）。' +
+        '参数：path(如 style.css)、content、reason(为什么改)、append?(true 表示追加到文件末尾)',
+      async run(args, runtime, caller) {
+        const source = runtime.clientSource;
+        if (source === undefined) return fail('CLIENT_SOURCE_DISABLED: 当前宿主没有接上客户端源码管理器');
+
+        const relPath = asString(args.path);
+        if (relPath === '') return fail('INVALID_ARGS: client.write 需要 path');
+        if (typeof args.content !== 'string') return fail('INVALID_ARGS: client.write 需要 content（字符串）');
+
+        // 改自己的代码属于最高风险动作：必须过审批门（默认拒绝）
+        const decision = await runtime.approval.request({
+          id: `appr_${relPath}_${Date.now()}`,
+          action: 'client.write',
+          risk: 'high',
+          agentId: caller,
+          detail: relPath,
+        });
+        if (decision === 'deny') return fail('审批被拒绝：client.write');
+
+        const written = await source.write(relPath, args.content, {
+          reason: asString(args.reason),
+          author: caller,
+          append: args.append === true,
+        });
+        if (!written.ok) return fail(`${written.error.code}: ${written.error.message}`);
+
+        if (!written.value.unchanged) {
+          const diff = source.diff(relPath);
+          runtime.onClientChanged?.({
+            kind: 'write',
+            path: relPath,
+            reason: asString(args.reason),
+            version: written.value.version,
+            selfTest: 'passed',
+            ...(diff.ok ? { diff: { added: diff.value.added, removed: diff.value.removed } } : {}),
+          });
+        }
+
+        return done({
+          path: relPath,
+          version: written.value.version,
+          bytes: written.value.bytes,
+          created: written.value.created,
+          unchanged: written.value.unchanged,
+          selfTest: written.value.selfTest.checks.map((check) => `${check.name}: ${check.ok ? 'ok' : 'failed'}`),
+        });
+      },
+    },
+    {
+      name: 'client.revert',
+      description: '把客户端源码回滚到上一版或指定版本。参数：path, version?',
+      async run(args, runtime) {
+        const source = runtime.clientSource;
+        if (source === undefined) return fail('CLIENT_SOURCE_DISABLED: 当前宿主没有接上客户端源码管理器');
+
+        const relPath = asString(args.path);
+        if (relPath === '') return fail('INVALID_ARGS: client.revert 需要 path');
+
+        const reverted = source.revert(relPath, typeof args.version === 'number' ? args.version : undefined);
+        if (!reverted.ok) return fail(`${reverted.error.code}: ${reverted.error.message}`);
+
+        runtime.onClientChanged?.({
+          kind: 'revert',
+          path: relPath,
+          reason: `回滚到 v${reverted.value.restoredFrom}`,
+          version: reverted.value.version,
+          selfTest: 'skipped',
+          restoredFrom: reverted.value.restoredFrom,
+        });
+
+        return done(reverted.value);
       },
     },
   ];

@@ -260,14 +260,23 @@ async function runServe(argv: string[]): Promise<number> {
   }
 
   fs.mkdirSync(dir, { recursive: true });
-  const session = new ClientSession({ dir, agentEnv });
+
+  // 人类就坐在这个页面前面，所以审批门给「放行一次」的策略——但每一次都留痕可查
+  const session = new ClientSession({
+    dir,
+    agentEnv,
+    approval: new ApprovalGate({ policy: () => 'allow_once' }),
+  });
   const server = await startServer({ session, port });
 
   console.log('Agent Client · 可用态\n');
   console.log(`  打开：${server.url}`);
   console.log(`  模型：${modelLabel}`);
   console.log(`  数据：${dir}`);
-  console.log('\n  在页面里说话，Agent 会一边回你，一边把它自己的界面改给你看。Ctrl+C 退出。\n');
+  console.log(`  可改源码：${session.clientSource?.root ?? '（未启用自举）'}`);
+  console.log('  审批：人类在场 → 自动放行，但每次动作都写进事件日志（审批 UI 属下一阶段）');
+  console.log('\n  在页面里说话，Agent 会一边回你，一边把它自己的界面改给你看。');
+  console.log('  试试说「换个配色」——它会去改自己的 style.css，自检通过后界面当场变色。Ctrl+C 退出。\n');
 
   const shutdown = async (): Promise<void> => {
     console.log('\n正在回收 Agent 进程…');

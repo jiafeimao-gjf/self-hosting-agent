@@ -19,6 +19,7 @@
 | **CLI-008** | specs/011-client.md | 多轮记忆：第二轮请求的上下文包含第一轮的人类消息与 Agent 回复（由事件日志投影）。 | `test/server.test.ts` · 多轮记忆：第二轮上下文包含第一轮的人类消息与 Agent 回复（事件日志投影） |
 | **CLI-009** | specs/011-client.md | 模型不可用时（HTTP 端口报错）客户端收到可读的错误帧，服务本身不崩。 | `test/server.test.ts` · 模型不可用时客户端收到可读的错误帧，服务本身不崩 |
 | **CLI-010** | specs/011-client.md | 服务端可以只监听 127.0.0.1（默认），不对外暴露。 | `test/server.test.ts` · 默认只监听 127.0.0.1，不对外暴露 |
+| **CLI-011** | specs/011-client.md | `POST /api/client/revert` 让人类**不必经过 Agent** 就能把被改过的客户端源码回滚（架构底线：人类永远能一键回滚）。 | `test/server.test.ts` · POST /api/client/revert 让人类不经过 Agent 就能回滚客户端源码 |
 | **E2E-001** | specs/007-e2e.md | 端到端成立：Kernel 拉起 Loop 子进程，`human.message` 进去后，宿主能收到 `ui.patch`，界面文档产生新版本，并能渲染出含该面板的 HTML。 | `test/e2e.test.ts` · 端到端：子进程跑完 Loop → ui.patch → 界面文档出新版本并渲染出 HTML |
 | **E2E-002** | specs/007-e2e.md | 非法 View Spec 被 `SurfaceIngest` 拒绝：不进入界面文档（版本不前进）、留下 rejected 记录，且**界面依然可用**。 | `test/e2e.test.ts` · 非法 View Spec 被拒绝：版本不前进、有留痕、界面依然可用 |
 | **E2E-003** | specs/007-e2e.md | 回滚：连续应用多次 patch 后可回到任意历史版本，渲染结果随之回退（架构里的「可回滚的改造权」）。 | `test/e2e.test.ts` · 回滚：多次改造后可回到任意版本，渲染结果随之回退 |
@@ -106,6 +107,19 @@
 | **PROTO-008** | specs/001-protocol.md | 每个帧类型都声明了方向，`directionOf()` 与帧表一致，`isInbound()` 可判定。 | `test/protocol.test.ts` · 每个帧类型都声明方向，directionOf / isInbound 与帧表一致 |
 | **PROTO-009** | specs/001-protocol.md | 每个帧类型都必须能编码-解码往返（round trip）而不丢字段。 | `test/protocol.test.ts` · 每个帧类型都能编码-解码往返且不丢字段 |
 | **PROTO-010** | specs/001-protocol.md | `tool.reply` 是宿主回填宿主工具结果的**唯一**入站帧（方向 in），必填 `id` 与 `ok`；缺 `ok` 报 `MISSING_FIELD`。 | `test/protocol.test.ts` · tool.reply 是宿主回填宿主工具结果的唯一入站帧 |
+| **SELF-001** | specs/013-self-hosting.md | 写作用域：`src/client/**` 内允许；`../`、绝对路径、其它目录一律拒绝且不落盘。 | `test/self-hosting.test.ts` · 写作用域：src/client 之外一律拒绝，且不落盘 |
+| **SELF-002** | specs/013-self-hosting.md | `read` 同样受作用域与大小上限约束；不存在的文件返回明确错误。 | `test/self-hosting.test.ts` · read 同样受作用域与存在性约束 |
+| **SELF-003** | specs/013-self-hosting.md | `list` 返回可改文件、字节数与版本数。 | `test/self-hosting.test.ts` · list 返回可改文件、字节数与版本数 |
+| **SELF-004** | specs/013-self-hosting.md | 写入成功后文件内容更新、版本号 +1、历史留快照。 | `test/self-hosting.test.ts` · 写入成功：内容更新、版本 +1、历史留快照 |
+| **SELF-005** | specs/013-self-hosting.md | 版本历史可读，能给出人可读 diff（新增/删除行数与被改的行）。 | `test/self-hosting.test.ts` · diff 给出人可读差异（增删行与内容） |
+| **SELF-006** | specs/013-self-hosting.md | 自检通过才落盘：自检失败时文件内容**与写入前逐字节一致**（自动回滚）。 | `test/self-hosting.test.ts` · 自检不通过 → 逐字节回滚，且不进历史 |
+| **SELF-007** | specs/013-self-hosting.md | 语法错误（`node --check` 失败）同样触发回滚，且错误信息可读。 | `test/self-hosting.test.ts` · 语法错误被真的语法自检拦下并回滚（用生产实现，不是假 selfTest） |
+| **SELF-008** | specs/013-self-hosting.md | `client.write` 过审批门：默认拒绝时不写文件、不进历史。 | `test/self-hosting.test.ts` · client.write 过审批门：默认拒绝时不写文件 |
+| **SELF-009** | specs/013-self-hosting.md | 审计：每次写入 / 回滚都写事件日志（含 path、reason、自检结果）。 | `test/self-hosting.test.ts` · 审计：成功写入写 client.write，失败写入写 client.write.rejected |
+| **SELF-010** | specs/013-self-hosting.md | 回滚：`revert` 把文件恢复为上一版内容，并广播 `client.changed{kind:'revert'}`。 | `test/self-hosting.test.ts` · revert 回到上一版，并留下回滚记录 |
+| **SELF-011** | specs/013-self-hosting.md | 广播：写入成功与回滚都产生 `client.changed`；`/api/state` 的 `sources` 同步更新。 | `test/self-hosting.test.ts` · 广播：写入触发 client.changed，且 state.sources 同步更新 |
+| **SELF-012** | specs/013-self-hosting.md | 无变化写入是幂等的：内容与当前一致时不产生新版本。 | `test/self-hosting.test.ts` · 无变化写入是幂等的：不产生新版本 |
+| **SELF-013** | specs/013-self-hosting.md | `append` 模式：在文件末尾追加内容（不必先读全文），且同样走自检门禁。 | `test/self-hosting.test.ts` · append 模式在末尾追加，且同样走自检门禁 |
 | **SURF-001** | specs/006-surface.md | 组件表 `COMPONENT_SPECS` 是唯一真相来源：校验器、渲染器与 JSON Schema 均由它派生，新增组件只需改这一处。 | `test/surface.test.ts` · 组件表是唯一真相来源：校验 / 渲染 / schema 三处同步 |
 | **SURF-002** | specs/006-surface.md | `validateViewSpec` 接受全部已声明组件的合法 spec 并返回 `{ok:true}`，对任意输入（含 `null`、数组、标量、循环引用）永不抛异常。 | `test/surface.test.ts` · validateViewSpec 接受合法 spec，且对任意输入永不抛异常 |
 | **SURF-003** | specs/006-surface.md | 未知组件类型报 `UNKNOWN_COMPONENT`，与结构错误（`MISSING_FIELD` / `BAD_FIELD_TYPE` / `UNKNOWN_FIELD`）在错误码上可区分，且错误带 `path`。 | `test/surface.test.ts` · 未知组件类型与结构错误在错误码上可区分，且都带 path |
@@ -138,10 +152,16 @@
 | **UI-007** | specs/012-client-ui.md | `app.js` 用 `EventSource('/api/stream')` 订阅并处理 `state` / `frame` / `document` / `done` 四类事件，通过 `POST` 调用 `/api/message`、`/api/interrupt`、`/api/rollback`；在 Node 中 import 无副作用，`normalizeState` 对缺字段的坏输入退化为空。 | `test/client-ui.test.ts` · app.js 订阅 /api/stream 处理四类事件，并用 POST 调 message / interrupt / rollback |
 | **UI-008** | specs/012-client-ui.md | 对话流把人类消息靠右、`agent.thinking` 靠左，工具调用渲染成「谁 · 调了什么 · ok/失败」的摘要行，时间线按事件类型上色，且所有进入 DOM 的文本都经过 `escapeHtml`。 | `test/client-ui.test.ts` · 对话流：人类靠右、thinking 靠左、工具调用是可读摘要行，所有文本都转义 |
 | **UI-009** | specs/012-client-ui.md | 首帧不会被吞：iframe 尚未完成初始加载时收到的 html 先记为待画、`load` 之后补画；`document` 事件强制重画；判定「要不要画」看的是**画没画上**而不是「内容变没变」。（真实故障：首帧赋值被 iframe 尚未完成的初始加载覆盖，缓存又认定「这份 html 画过了」，于是面板永久空白。） | `test/client-ui.test.ts` · 首帧不会被吞：没画上就必须再画，document 事件强制重画 |
+| **UI2-001** | specs/014-client-selfhost-ui.md | `app.js` 用 SSE 订阅 `client.changed`（事件名含点号），把 `write` / `revert` 两类变更归一化后追加进事件时间线，且对坏 data 不抛异常。 | `test/client-selfhost-ui.test.ts` · 订阅 client.changed：写 / 回滚都归一化，并进事件时间线 |
+| **UI2-002** | specs/014-client-selfhost-ui.md | `path` 以 `.css` 结尾时，按文件名找到对应的 `<link rel="stylesheet">` 并把 href 换成带 cache-bust 查询串（`?v=<版本>&t=<时间戳>`）的新地址；热替换不刷新页面（`app.js` 内无自动刷新路径）。 | `test/client-selfhost-ui.test.ts` · CSS 变更走无刷新热替换：按文件名定位 <link> 并加 cache-bust 查询串 |
+| **UI2-003** | specs/014-client-selfhost-ui.md | `.js` / `.html` 变更显示「刷新以生效」横幅，横幅上的刷新按钮**只有人类点击**才导航到当前地址（等价整页刷新）；`app.js` 不含 UI-006 禁止的 `location.reload` / `location.href =` 字面量，不存在自动刷新。 | `test/client-selfhost-ui.test.ts` · JS / HTML 变更显示横幅，刷新按钮只由人类点击触发，绝不自动刷新 |
+| **UI2-004** | specs/014-client-selfhost-ui.md | 横幅显示 path / reason / 自检结果 / 版本号 / 差异行数，带关闭按钮；`kind:'revert'` 文案为「已回滚」，与 `write` 不同；`reason` 等自由文本全部转义。 | `test/client-selfhost-ui.test.ts` · 横幅显示 path / reason / 自检 / 版本 / 差异，可关闭，revert 文案不同且文本转义 |
+| **UI2-005** | specs/014-client-selfhost-ui.md | 检查器新增「客户端源码」区：`/api/state` 的 `sources: [{path,bytes,versions}]` 渲染成路径 / 字节 / 版本数列表，`index.html` 含 `#sources`，字段缺失时退化为空列表、单列显示 `—`，不炸。 | `test/client-selfhost-ui.test.ts` · 检查器「客户端源码」区渲染 path / bytes / versions，缺字段退化为空列表 |
+| **UI2-006** | specs/014-client-selfhost-ui.md | 防御性：`normalizeClientChange` 对 `null` / 非对象 / 未知 `kind` / 非字符串字段 / 非数字版本一律退化为默认值，`renderClientChange`、`renderSourceRow`、`cacheBustHref`、`findStyleLinkIndex` 对任意输入都不抛异常，且进入 DOM 的文本都经过 `escapeHtml`。 | `test/client-selfhost-ui.test.ts` · 防御性：坏输入不抛异常、未知字段退化，进入 DOM 的文本全部转义 |
 
 ## 统计
 
-- 验收标准：**134** 条
-- 已覆盖：**134** 条
+- 验收标准：**154** 条
+- 已覆盖：**154** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

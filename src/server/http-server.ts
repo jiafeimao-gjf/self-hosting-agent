@@ -159,6 +159,20 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       return;
     }
 
+    if (route === '/api/client/revert' && method === 'POST') {
+      readBody(req).then((body) => {
+        const target = typeof body.path === 'string' ? body.path : '';
+        if (target === '') {
+          sendJson(res, 400, { ok: false, error: 'BAD_PATH' });
+          return;
+        }
+        const version = typeof body.version === 'number' ? body.version : undefined;
+        const result = session.revertClient(target, version);
+        sendJson(res, result.ok ? 200 : 400, result);
+      }).catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
+      return;
+    }
+
     if (method === 'GET') {
       const asset = resolveClientAsset(clientDir, route);
       if (asset === undefined) {

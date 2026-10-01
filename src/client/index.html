@@ -18,6 +18,9 @@
       <button id="interrupt" class="btn btn-danger" type="button" title="人类夺权，让当前一轮停在最近边界">中断</button>
     </header>
 
+    <!-- SPEC-014 变更横幅：client.changed 事件驱动，可关闭；刷新按钮只由人类点击 -->
+    <section id="client-change" class="change-banner" role="status" aria-live="polite" hidden></section>
+
     <main class="grid">
       <!-- 左栏：对话 -->
       <section class="zone zone-chat" aria-label="对话">
@@ -49,19 +52,24 @@
 
       <!-- 右栏下：检查器 -->
       <section class="zone zone-inspector" aria-label="检查器">
-        <div class="zone-head"><h2>检查器</h2><span class="hint">进程表 · 任务板 · 事件时间线</span></div>
+        <div class="zone-head"><h2>检查器</h2><span class="hint">进程表 · 任务板 · 事件时间线 · 客户端源码</span></div>
         <div class="inspector">
-          <div class="card">
+          <div class="card card-agents">
             <h3 class="card-title">Agent 进程表</h3>
             <div id="agents" class="agents"></div>
           </div>
-          <div class="card">
+          <div class="card card-tasks">
             <h3 class="card-title">任务板</h3>
             <div id="tasks" class="tasks"></div>
           </div>
-          <div class="card">
+          <div class="card card-timeline">
             <h3 class="card-title">事件时间线</h3>
             <ol id="timeline" class="timeline"></ol>
+          </div>
+          <!-- SPEC-014 §4：Agent 能改的客户端源码（路径 / 字节 / 版本数） -->
+          <div class="card card-sources">
+            <h3 class="card-title">客户端源码</h3>
+            <div id="sources" class="sources"></div>
           </div>
         </div>
       </section>
