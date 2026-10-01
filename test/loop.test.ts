@@ -6,7 +6,8 @@ import path from 'node:path';
 
 import { EventLog } from '../src/eventlog/log.ts';
 import { AgentLoop, assembleContext, defineTool } from '../src/loop/loop.ts';
-import type { ContextItem, Frame, ModelInput, ModelOutput } from '../src/loop/loop.ts';
+import type { ContextItem, ModelInput, ModelOutput } from '../src/loop/loop.ts';
+import type { Frame } from '../src/protocol/frames.ts';
 import { scriptedModel } from '../src/loop/fake-model.ts';
 
 function tempLog(): EventLog {

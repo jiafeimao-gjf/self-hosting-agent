@@ -8,9 +8,10 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **76** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **76 / 76** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **75** 个，全绿（约 4.3s，零第三方依赖） |
+| 验收标准 | **77** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **77 / 77** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **76** 个，全绿（约 4.5s，零第三方依赖） |
+| 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
 | 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest、CLI 端到端 |
 | 尚未落地 | 真实模型端口、Electron/Tauri 宿主、iframe 沙箱、热更新（P1–P3） |
 
@@ -65,6 +66,7 @@ npm run check     # = npm run trace && npm test
 ```bash
 node -v            # 需要 >= 24（原生 TS + node:test，零运行时依赖）
 npm run check      # 规格追溯门禁 + 全量测试
+npm run typecheck  # 类型检查（无 tsc 时会明确提示「跳过」，不会假装通过）
 npm run demo       # 端到端演示：Kernel 拉起源码里的 Agent Loop 子进程
 ```
 

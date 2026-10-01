@@ -78,6 +78,14 @@ View Spec 是一个 JSON 对象，`type` 字段决定它是哪种组件；`panel
 
 版本号就是架构里说的「快照 v14」。
 
+## 6. 契约漂移门禁
+
+`schemaOf()` 是 View Spec schema 的唯一来源，磁盘副本 `specs/schemas/view-spec.schema.json` 由 SURF-009 逐字节守护。它不并入 `scripts/gen-schema.mjs`（保持脚本零改动），重新生成用：
+
+```bash
+node -e "import('./src/surface/viewspec.ts').then(async (m) => { const fs = await import('node:fs'); fs.writeFileSync('specs/schemas/view-spec.schema.json', JSON.stringify(m.schemaOf(), null, 2) + '\n'); })"
+```
+
 ## 验收标准
 
 - **SURF-001** 组件表 `COMPONENT_SPECS` 是唯一真相来源：校验器、渲染器与 JSON Schema 均由它派生，新增组件只需改这一处。

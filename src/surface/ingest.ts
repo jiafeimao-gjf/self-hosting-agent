@@ -39,15 +39,23 @@ export class SurfaceIngest {
   }
 
   ingest(patch: ViewPatch): IngestResult {
-    const validation = validateViewSpec(patch.spec);
+    // op='patch' 是**局部字段补丁**（允许省略 type 与必填字段），因此不能在入口按整份
+    // View Spec 校验——否则 patch 粒度会被入口闸门废掉。它交给 ViewDocument 深合并后再复检，
+    // 「提交进文档的 spec 永远合法」这条保证由 applyPatch 的合并后复检兜住。
+    const isPartial = patch.op === 'patch';
 
-    if (!validation.ok) {
-      const reason = validation.error.message;
-      this.#reject(patch, reason, validation.error.code);
-      return { ok: false, reason, code: validation.error.code };
+    let spec: unknown = patch.spec;
+    if (!isPartial) {
+      const validation = validateViewSpec(patch.spec);
+      if (!validation.ok) {
+        const reason = validation.error.message;
+        this.#reject(patch, reason, validation.error.code);
+        return { ok: false, reason, code: validation.error.code };
+      }
+      spec = validation.spec;
     }
 
-    const applied = this.#document.applyPatch({ scope: patch.scope, op: patch.op, spec: validation.spec });
+    const applied = this.#document.applyPatch({ scope: patch.scope, op: patch.op, spec });
     if (!applied.ok) {
       const reason = applied.error.message;
       this.#reject(patch, reason, applied.error.code);

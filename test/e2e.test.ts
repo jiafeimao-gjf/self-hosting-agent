@@ -109,6 +109,28 @@ test('回滚：多次改造后可回到任意版本，渲染结果随之回退',
   assert.doesNotMatch(html, /预算总览/);
 });
 
+// @spec E2E-005
+test('局部补丁：op=patch 能穿过入口闸门做深合并；合并后非法则整笔作废', () => {
+  const document = new ViewDocument();
+  const ingest = new SurfaceIngest({ document });
+
+  ingest.ingest({ scope: 'surface.sidebar', op: 'mount', spec: PANEL });
+  const v1 = document.version;
+
+  const merged = ingest.ingest({ scope: 'surface.sidebar', op: 'patch', spec: { title: '预算（已改）' } });
+  assert.equal(merged.ok, true, '局部补丁不该被入口闸门拦下');
+  assert.equal(document.version, v1 + 1);
+  const afterPatch = document.render();
+  assert.match(afterPatch, /预算（已改）/);
+  assert.match(afterPatch, /提高上限/, '未提及的字段必须被保留');
+
+  const broken = ingest.ingest({ scope: 'surface.sidebar', op: 'patch', spec: { children: '不是数组' } });
+  assert.equal(broken.ok, false);
+  assert.equal(document.version, v1 + 1, '合并后非法的补丁整笔作废');
+  assert.equal(ingest.rejected.length, 1);
+  assert.match(document.render(), /预算（已改）/, '作废之后界面必须还是上一版');
+});
+
 // @spec E2E-004
 test('CLI demo 作为真实进程跑通并落盘产物', () => {
   const outDir = tempDir('out');

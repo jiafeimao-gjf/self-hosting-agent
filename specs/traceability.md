@@ -13,6 +13,7 @@
 | **E2E-002** | specs/007-e2e.md | 非法 View Spec 被 `SurfaceIngest` 拒绝：不进入界面文档（版本不前进）、留下 rejected 记录，且**界面依然可用**。 | `test/e2e.test.ts` · 非法 View Spec 被拒绝：版本不前进、有留痕、界面依然可用 |
 | **E2E-003** | specs/007-e2e.md | 回滚：连续应用多次 patch 后可回到任意历史版本，渲染结果随之回退（架构里的「可回滚的改造权」）。 | `test/e2e.test.ts` · 回滚：多次改造后可回到任意版本，渲染结果随之回退 |
 | **E2E-004** | specs/007-e2e.md | CLI 可独立跑通：`node src/cli.ts demo` 作为真实进程执行到底，退出码为 0，并落盘 `surface.html` 与 `surface.json`。 | `test/e2e.test.ts` · CLI demo 作为真实进程跑通并落盘产物 |
+| **E2E-005** | specs/007-e2e.md | 局部补丁：`op='patch'` 的局部字段补丁能穿过入口闸门落到界面文档（深合并、其余字段保留）；合并后非法的补丁整笔作废、版本不前进。三种粒度在端到端链路上都成立。 | `test/e2e.test.ts` · 局部补丁：op=patch 能穿过入口闸门做深合并；合并后非法则整笔作废 |
 | **KERN-001** | specs/004-kernel.md | `spawn` 拉起独立子进程：`pid` 存在且与宿主 `process.pid` 不同，能读到子进程发出的帧。 | `test/kernel.test.ts` · spawn 拉起独立子进程：pid 与宿主不同，能读到子进程发出的帧 |
 | **KERN-002** | specs/004-kernel.md | 宿主 `send(human.message)` 后，子进程会跑完 Loop 并回传 `loop.done`。 | `test/kernel.test.ts` · 宿主 send(human.message) 后子进程跑完 Loop 并回传 loop.done |
 | **KERN-003** | specs/004-kernel.md | 同一池中两个 Agent 拥有不同 pid（一 Agent 一进程）。 | `test/kernel.test.ts` · 一个 Agent 一个进程：两个 Agent 的 pid 不同 |
@@ -83,7 +84,7 @@
 
 ## 统计
 
-- 验收标准：**76** 条
-- 已覆盖：**76** 条
+- 验收标准：**77** 条
+- 已覆盖：**77** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

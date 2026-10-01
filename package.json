@@ -13,7 +13,7 @@
     "trace": "node scripts/trace.mjs",
     "check": "npm run trace && npm test",
     "demo": "node src/cli.ts demo",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "node scripts/typecheck.mjs"
   },
   "devDependencies": {}
 }
