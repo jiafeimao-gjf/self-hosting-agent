@@ -8,12 +8,50 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **77** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **77 / 77** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **76** 个，全绿（约 4.5s，零第三方依赖） |
+| 验收标准 | **112** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **112 / 112** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **111** 个，全绿（约 7.3s，零第三方依赖） |
 | 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
-| 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest、CLI 端到端 |
-| 尚未落地 | 真实模型端口、Electron/Tauri 宿主、iframe 沙箱、热更新（P1–P3） |
+| P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
+| P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
+| 尚未落地 | Electron/Tauri 宿主、iframe 沙箱、热更新、Agent 改宿主自身代码（P2–P3） |
+
+## 两个可跑的演示
+
+```bash
+npm run demo    # P0：单 Agent —— 子进程跑完五步 → ui.patch → 界面文档 v1 → HTML
+npm run team    # P1：多 Agent —— Lead 建任务 → 拉起队友 → 队友领活干完 → 回报 → Lead 改界面
+```
+
+`npm run team` 的真实输出（两个独立进程、6 次宿主工具调用、任务板终态 completed）：
+
+```
+终态：completed（641ms）
+子 Agent：teammate:ui
+任务板：task_19 → completed @ teammate:ui
+界面文档：v1，scopes=[surface.sidebar]
+宿主工具调用：6 次
+事件日志：81 条 {"agent.spawn":2,"agent.frame":65,"host.tool.call":6,"host.tool.result":6,"agent.exit":2}
+```
+
+## P1：宿主工具与编排（为什么这么设计）
+
+Loop 是被 Kernel 托管的进程，它能调模型、跑本地工具，但有三件事**做不到也不该做**：拉起新进程、给别的 Agent 投递消息、把界面改动写进界面文档。
+
+于是协议补一帧 `tool.reply`（入站）：Loop 发 `tool.call` 请宿主代办，宿主执行完回填。**被托管的进程不反向控制内核，只是提出请求。**
+
+```
+Lead 进程 ──tool.call: agent.spawn──▶ Kernel ──▶ 拉起 Teammate 进程
+                                       │
+Teammate ──loop.done──────────────────▶ Kernel ──自动回报父 Agent──▶ Lead 收到 peer.message
+                                       │
+Lead ──tool.call: ui.render──▶ Kernel ──▶ SurfaceIngest 校验 ──▶ 界面文档 v1
+```
+
+两条编排不变量：
+
+- **子 Agent 完成由 Kernel 主动回报父 Agent**——不指望子 Agent 记得说话，`agent.wait` 因此不会挂死。
+- **邮箱是唯一的投递记录**：先落盘再投递，目标不在世就等它上线，消息不丢。
 
 ## 三条公理
 
@@ -67,7 +105,8 @@ npm run check     # = npm run trace && npm test
 node -v            # 需要 >= 24（原生 TS + node:test，零运行时依赖）
 npm run check      # 规格追溯门禁 + 全量测试
 npm run typecheck  # 类型检查（无 tsc 时会明确提示「跳过」，不会假装通过）
-npm run demo       # 端到端演示：Kernel 拉起源码里的 Agent Loop 子进程
+npm run demo       # P0 端到端演示：Kernel 拉起源码里的 Agent Loop 子进程
+npm run team       # P1 多 Agent 编排演示
 ```
 
 `npm run demo` 会：

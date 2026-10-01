@@ -131,6 +131,26 @@ test('局部补丁：op=patch 能穿过入口闸门做深合并；合并后非�
   assert.match(document.render(), /预算（已改）/, '作废之后界面必须还是上一版');
 });
 
+// @spec E2E-006
+test('CLI team 命令跑通一次真实的多进程编排并落盘产物', () => {
+  const outDir = tempDir('team-out');
+  const runDir = tempDir('team-run');
+
+  const stdout = execFileSync(
+    process.execPath,
+    [path.join(root, 'src', 'cli.ts'), 'team', '--out', outDir, '--dir', runDir],
+    { cwd: root, encoding: 'utf8', timeout: 60000 },
+  );
+
+  assert.match(stdout, /终态：completed/);
+  assert.match(stdout, /子 Agent：teammate:ui/);
+  assert.match(stdout, /任务板：task_19 → completed @ teammate:ui/);
+
+  const html = fs.readFileSync(path.join(outDir, 'team-surface.html'), 'utf8');
+  assert.match(html, /今日预算/);
+  assert.ok(fs.existsSync(path.join(runDir, 'mailbox', 'mailbox.jsonl')), '邮箱要落盘');
+});
+
 // @spec E2E-004
 test('CLI demo 作为真实进程跑通并落盘产物', () => {
   const outDir = tempDir('out');

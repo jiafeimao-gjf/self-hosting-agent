@@ -12,6 +12,7 @@ import path from 'node:path';
 import { EventLog } from './eventlog/log.ts';
 import { ApprovalGate } from './kernel/approval.ts';
 import { AgentPool } from './kernel/pool.ts';
+import { TeamRunner } from './orchestrator/team.ts';
 import { ViewDocument } from './surface/document.ts';
 import { SurfaceIngest } from './surface/ingest.ts';
 import { validateViewSpec } from './surface/viewspec.ts';
@@ -145,11 +146,89 @@ async function runDemo(argv: string[]): Promise<number> {
   return 0;
 }
 
+const PANEL_SPEC = {
+  type: 'panel',
+  title: '今日预算',
+  children: [
+    { type: 'progress', label: 'token', value: 0.62, tone: 'warning' },
+    { type: 'action', label: '提高上限', emit: 'ui.event:raise_budget' },
+  ],
+};
+
+/** P1 演示：Lead 建任务 → 拉起队友 → 队友领活干完 → 回报 → Lead 改界面 */
+const TEAM_LEAD_SCRIPT = [
+  { toolCalls: [{ id: 'l1', name: 'task.create', args: { id: 'task_19', subject: '预算进度条组件', writeScopes: ['client-plugins/**'] } }] },
+  { toolCalls: [{ id: 'l2', name: 'agent.spawn', args: { agentId: 'teammate:ui', brief: '请领取 task_19：把预算做成进度条' } }] },
+  { toolCalls: [{ id: 'l3', name: 'agent.wait', args: { ids: ['teammate:ui'], timeoutMs: 20000 } }] },
+  { text: '队友交付了，我把它挂到侧边栏。', toolCalls: [{ id: 'l4', name: 'ui.render', args: { scope: 'surface.sidebar', op: 'mount', spec: PANEL_SPEC } }] },
+  { text: '界面已更新，收工。', done: true },
+];
+
+const TEAM_MATE_SCRIPT = [
+  { text: '收到 brief，先领任务。', toolCalls: [{ id: 't1', name: 'task.claim', args: { id: 'task_19', expectedRevision: 0 } }] },
+  { text: '写完组件，交付。', toolCalls: [{ id: 't2', name: 'task.complete', args: { id: 'task_19', expectedRevision: 1 } }] },
+  { text: '组件写完，已交付', done: true },
+];
+
+async function runTeam(argv: string[]): Promise<number> {
+  const args = parseArgs(argv);
+  const cwd = process.cwd();
+  const outDir = args.out ?? path.join(cwd, 'examples', 'out');
+  const runDir = args.dir ?? path.join(cwd, '.agent-client', 'team');
+  const prompt = args.prompt ?? '给预算加一个进度条';
+
+  fs.mkdirSync(outDir, { recursive: true });
+  fs.rmSync(runDir, { recursive: true, force: true });
+
+  console.log('Agent Client · P1 原生多 Agent 编排\n');
+  console.log(`需求：${prompt}`);
+  console.log(`工作目录：${runDir}\n`);
+
+  const runner = new TeamRunner({
+    dir: runDir,
+    // 「人类在旁边看着」的审批策略：agent.spawn 属于 L3 动作，默认拒绝
+    approval: new ApprovalGate({ policy: () => 'allow_once' }),
+    scripts: { 'teammate:ui': TEAM_MATE_SCRIPT },
+    onFrame: (agentId, frame) => console.log(`  ←  [${agentId}] ${describe(frame)}`),
+  });
+
+  const result = await runner.runLead({ prompt, script: TEAM_LEAD_SCRIPT });
+
+  const htmlPath = path.join(outDir, 'team-surface.html');
+  fs.writeFileSync(htmlPath, runner.document.render({ title: 'Agent Client · P1 编排演示' }), 'utf8');
+
+  const counts = runner.log.replay(
+    (state: Record<string, number>, event: { type: string }) => {
+      state[event.type] = (state[event.type] ?? 0) + 1;
+      return state;
+    },
+    {},
+  );
+
+  const task = runner.board.get('task_19');
+  console.log(`\n终态：${result.reason}（${result.elapsedMs}ms）`);
+  console.log(`子 Agent：${result.children.join(', ') || '（无）'}`);
+  console.log(`任务板：task_19 → ${task?.status ?? '不存在'}${task?.owner ? ` @ ${task.owner}` : ''}`);
+  console.log(`界面文档：v${runner.document.version}，scopes=[${runner.document.scopes().join(', ')}]`);
+  console.log(`宿主工具调用：${counts['host.tool.call'] ?? 0} 次`);
+  console.log(`事件日志：${runner.log.size} 条 ${JSON.stringify(counts)}`);
+  console.log(`\n打开看看：${htmlPath}`);
+  return 0;
+}
+
 const command = process.argv[2];
 const rest = process.argv.slice(3);
 
 if (command === 'render') {
   process.exit(runRender(rest));
+} else if (command === 'team') {
+  runTeam(rest).then(
+    (code) => process.exit(code),
+    (err: unknown) => {
+      console.error(`✖ team 失败：${err instanceof Error ? err.stack ?? err.message : String(err)}`);
+      process.exit(1);
+    },
+  );
 } else if (command === 'demo' || command === undefined) {
   runDemo(rest).then(
     (code) => process.exit(code),

@@ -63,6 +63,9 @@
         "body": {
           "type": "string"
         },
+        "kind": {
+          "type": "string"
+        },
         "taskId": {
           "type": "string"
         },
@@ -162,6 +165,43 @@
           "type": "string"
         },
         "reason": {
+          "type": "string"
+        }
+      }
+    },
+    {
+      "title": "tool.reply",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "id",
+        "ok"
+      ],
+      "properties": {
+        "t": {
+          "const": "tool.reply"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "id": {
+          "type": "string"
+        },
+        "ok": {
+          "type": "boolean"
+        },
+        "result": {
+          "type": "string"
+        },
+        "error": {
           "type": "string"
         }
       }

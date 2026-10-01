@@ -100,6 +100,7 @@ export function toPeerFrame(message: MailboxMessage): Frame {
     from: message.from,
     body: message.body,
   };
+  if (message.kind !== undefined) frame.kind = message.kind;
   if (message.taskId !== undefined) frame.taskId = message.taskId;
   if (message.artifacts !== undefined) frame.artifacts = [...message.artifacts];
   return frame;
@@ -113,7 +114,12 @@ export function fromPeerFrame(frame: Frame, to: string): MailboxResult<SendInput
   if (typeof frame.from !== 'string') return invalid('peer.message 帧缺少 from', 'from');
   if (typeof frame.body !== 'string') return invalid('peer.message 帧缺少 body', 'body');
 
-  const input: SendInput = { from: frame.from, to, kind: 'peer.message', body: frame.body };
+  const input: SendInput = {
+    from: frame.from,
+    to,
+    kind: typeof frame.kind === 'string' ? frame.kind : 'peer.message',
+    body: frame.body,
+  };
   if (typeof frame.taskId === 'string') input.taskId = frame.taskId;
   if (Array.isArray(frame.artifacts)) {
     input.artifacts = frame.artifacts.filter((value): value is string => typeof value === 'string');

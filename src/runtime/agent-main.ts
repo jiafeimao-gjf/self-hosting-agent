@@ -9,9 +9,16 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { FrameChannel } from '../protocol/channel.ts';
-import { AgentLoop, defineTool } from '../loop/loop.ts';
+import { AgentLoop, DEFAULT_HOST_TOOL_TIMEOUT_MS, defineHostTool, defineTool } from '../loop/loop.ts';
 import type { Frame } from '../protocol/frames.ts';
-import type { InboxMessage, ModelPort, ModelOutput, ToolSpec } from '../loop/loop.ts';
+import type {
+  HostBridgePort,
+  HostToolReply,
+  InboxMessage,
+  ModelPort,
+  ModelOutput,
+  ToolSpec,
+} from '../loop/loop.ts';
 import { EventLog } from '../eventlog/log.ts';
 import { scriptedModel } from '../loop/fake-model.ts';
 
@@ -86,9 +93,55 @@ const stepDelayMs = Number(args['step-delay'] ?? 0);
 
 const log = new EventLog({ dir: logDir });
 const channel = new FrameChannel({ input: process.stdin, output: process.stdout });
+
+/** 宿主工具：由 Kernel 代办（拉起进程、投递消息、落界面、改任务板） */
+const hostToolNames = (args['host-tools'] ?? '')
+  .split(',')
+  .map((name) => name.trim())
+  .filter((name) => name !== '');
+const hostToolTimeoutMs = Number(args['host-tool-timeout'] ?? DEFAULT_HOST_TOOL_TIMEOUT_MS);
+
 const tools: ToolSpec[] = [
   defineTool('budget', (toolArgs) => ({ range: toolArgs.range ?? 'today', used: 620000, limit: 1000000 }), '读取预算'),
+  ...hostToolNames.map((name) => defineHostTool(name)),
 ];
+
+// ── 宿主工具桥：把 tool.call 发出去，等 tool.reply 回来 ──
+interface PendingReply {
+  resolve: (reply: HostToolReply) => void;
+  reject: (err: Error) => void;
+  timer: NodeJS.Timeout;
+}
+const pendingReplies = new Map<string, PendingReply>();
+
+const hostBridge: HostBridgePort = {
+  awaitToolReply(callId, options) {
+    return new Promise<HostToolReply>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        pendingReplies.delete(callId);
+        reject(new Error(`HOST_TOOL_TIMEOUT: 宿主 ${options.timeoutMs}ms 未回填 ${callId}`));
+      }, options.timeoutMs);
+      pendingReplies.set(callId, { resolve, reject, timer });
+    });
+  },
+};
+
+function settleReply(callId: string, reply: HostToolReply): void {
+  const pending = pendingReplies.get(callId);
+  if (pending === undefined) return;
+  clearTimeout(pending.timer);
+  pendingReplies.delete(callId);
+  pending.resolve(reply);
+}
+
+/** 人类夺权或宿主断开时，别让 Loop 挂在等回填上 */
+function abortPendingReplies(reason: string): void {
+  for (const [callId, pending] of pendingReplies) {
+    clearTimeout(pending.timer);
+    pending.reject(new Error(reason));
+    pendingReplies.delete(callId);
+  }
+}
 
 const pending: InboxMessage[] = [];
 let seq = 0;
@@ -133,6 +186,8 @@ async function runOnce(): Promise<void> {
     log,
     inbox,
     sink: { onFrame: send },
+    hostBridge,
+    hostToolTimeoutMs,
     system: '你是 Lead Agent：唯一与人类对话的进程，负责拆解、执行与收口。',
     maxContextItems: 40,
     budget: { maxTurns: 8, maxToolCalls: 20, maxTokens: 200000, maxWallClockMs: 120000 },
@@ -171,7 +226,16 @@ channel.on('frame', (frame: Frame) => {
     }
     case 'interrupt': {
       process.stderr.write(`[agent-main] 人类夺权：${String(frame.reason)}\n`);
+      abortPendingReplies(`HOST_TOOL_ABORTED: 人类中断（${String(frame.reason)}）`);
       currentLoop?.interrupt(String(frame.reason));
+      break;
+    }
+    case 'tool.reply': {
+      settleReply(String(frame.id), {
+        ok: frame.ok === true,
+        ...(typeof frame.result === 'string' ? { result: frame.result } : {}),
+        ...(typeof frame.error === 'string' ? { error: frame.error } : {}),
+      });
       break;
     }
     case 'ui.event':
@@ -190,6 +254,7 @@ channel.on('error', (error: { code: string; message: string }) => {
 });
 
 channel.on('close', () => {
+  abortPendingReplies('HOST_TOOL_ABORTED: 宿主连接已关闭');
   process.exit(0);
 });
 

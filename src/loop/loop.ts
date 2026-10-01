@@ -35,11 +35,34 @@ export interface ModelOutput {
   usage?: { tokens?: number };
 }
 
+/** 工具在哪执行：进程内，还是请宿主代办 */
+export type ToolExecution = 'loop' | 'host';
+
 export interface ToolSpec {
   name: string;
   description?: string;
-  run(args: Record<string, unknown>, context: ToolContext): Promise<unknown> | unknown;
+  /**
+   * 'loop'（默认）在 Loop 进程内执行；
+   * 'host' 是**宿主工具**——「拉起一个进程」「派发任务」这类只有 Kernel 干得了的事，
+   * Loop 发 tool.call 请宿主代办，宿主用 tool.reply 回填。
+   */
+  execute?: ToolExecution;
+  run?(args: Record<string, unknown>, context: ToolContext): Promise<unknown> | unknown;
 }
+
+/** 宿主对一次宿主工具调用的回填 */
+export interface HostToolReply {
+  ok: boolean;
+  result?: string;
+  error?: string;
+}
+
+/** 宿主工具桥：Loop 侧只需要这一个能力，不依赖 Kernel 的任何实现 */
+export interface HostBridgePort {
+  awaitToolReply(callId: string, options: { timeoutMs: number }): Promise<HostToolReply>;
+}
+
+export const DEFAULT_HOST_TOOL_TIMEOUT_MS = 30_000;
 
 export interface ToolContext {
   agentId: string;
@@ -105,6 +128,9 @@ export interface LoopOptions {
   sink: LoopSink;
   inbox?: InboxPort;
   guard?: UiGuard;
+  /** 宿主工具桥；没有它则宿主工具一律 NO_HOST_BRIDGE */
+  hostBridge?: HostBridgePort;
+  hostToolTimeoutMs?: number;
   budget?: LoopBudget;
   system?: string;
   maxContextItems?: number;
@@ -118,7 +144,11 @@ export function defineTool(
   run: (args: Record<string, unknown>, context: ToolContext) => Promise<unknown> | unknown,
   description?: string,
 ): ToolSpec {
-  return description === undefined ? { name, run } : { name, description, run };
+  return description === undefined ? { name, run, execute: 'loop' } : { name, description, run, execute: 'loop' };
+}
+
+export function defineHostTool(name: string, description?: string): ToolSpec {
+  return description === undefined ? { name, execute: 'host' } : { name, description, execute: 'host' };
 }
 
 /** 上下文裁剪：系统提示永远保留，其余保留最近的（LOOP-010） */
@@ -248,8 +278,24 @@ export class AgentLoop {
         let resultText = '';
         try {
           if (tool === undefined) throw new Error(`UNKNOWN_TOOL: 没有名为 ${call.name} 的工具`);
-          const value = await tool.run(call.args ?? {}, { agentId, turn, callId: call.id });
-          resultText = typeof value === 'string' ? value : JSON.stringify(value);
+
+          if (tool.execute === 'host') {
+            const bridge = this.#options.hostBridge;
+            if (bridge === undefined) {
+              throw new Error(`NO_HOST_BRIDGE: ${call.name} 需要宿主代办，但当前 Loop 没有接到宿主桥`);
+            }
+            const reply = await bridge.awaitToolReply(call.id, {
+              timeoutMs: this.#options.hostToolTimeoutMs ?? DEFAULT_HOST_TOOL_TIMEOUT_MS,
+            });
+            if (!reply.ok) throw new Error(reply.error ?? `HOST_TOOL_FAILED: ${call.name}`);
+            resultText = reply.result ?? '';
+          } else {
+            if (tool.run === undefined) {
+              throw new Error(`TOOL_NOT_IMPLEMENTED: ${call.name} 既没有本地实现，也没有标记为宿主工具`);
+            }
+            const value = await tool.run(call.args ?? {}, { agentId, turn, callId: call.id });
+            resultText = typeof value === 'string' ? value : JSON.stringify(value);
+          }
         } catch (err) {
           ok = false;
           resultText = err instanceof Error ? err.message : String(err);

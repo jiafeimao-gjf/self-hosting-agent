@@ -30,6 +30,10 @@ export interface SpawnOptions {
   logDir?: string;
   /** 模拟模型延迟，便于观察中断与边界投递 */
   stepDelayMs?: number;
+  /** 声明为宿主工具的名字列表：这些调用会走 tool.call → 宿主执行 → tool.reply 回填 */
+  hostTools?: string[];
+  /** 宿主工具回填超时 */
+  hostToolTimeoutMs?: number;
   cwd?: string;
   env?: Record<string, string>;
   /** 子进程启动参数（高级用法，会追加在内置参数之后） */
@@ -123,6 +127,17 @@ export class AgentProcess extends EventEmitter {
     this.send({ t: 'interrupt', reason });
   }
 
+  /** 回填一次宿主工具调用（tool.reply 是唯一的入站回填帧，PROTO-010） */
+  replyTool(callId: string, reply: { ok: boolean; result?: string; error?: string }): void {
+    this.send({
+      t: 'tool.reply',
+      id: callId,
+      ok: reply.ok,
+      ...(reply.result === undefined ? {} : { result: reply.result }),
+      ...(reply.error === undefined ? {} : { error: reply.error }),
+    });
+  }
+
   kill(signal: NodeJS.Signals = 'SIGTERM'): void {
     if (this.#alive) this.child.kill(signal);
   }
@@ -156,6 +171,10 @@ export class AgentPool {
     const logDir = options.logDir ?? path.join(this.#logRoot, options.agentId);
     const args = [entry, '--agent', options.agentId, '--log-dir', logDir];
     if (options.stepDelayMs !== undefined) args.push('--step-delay', String(options.stepDelayMs));
+    if (options.hostTools !== undefined && options.hostTools.length > 0) {
+      args.push('--host-tools', options.hostTools.join(','));
+    }
+    if (options.hostToolTimeoutMs !== undefined) args.push('--host-tool-timeout', String(options.hostToolTimeoutMs));
     if (options.script !== undefined) args.push('--script', JSON.stringify(options.script));
     if (options.extraArgs) args.push(...options.extraArgs);
 

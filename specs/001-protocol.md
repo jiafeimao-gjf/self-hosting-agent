@@ -24,10 +24,11 @@
 | `t` | 方向 | 必填 | 可选 |
 | --- | --- | --- | --- |
 | `human.message` | in | `text` | `at` |
-| `peer.message` | in | `from`, `body` | `taskId`, `artifacts` |
+| `peer.message` | in | `from`, `body` | `kind`, `taskId`, `artifacts` |
 | `ui.event` | in | `target`, `event` | `payload` |
 | `approval.reply` | in | `id`, `decision` | `reason` |
 | `interrupt` | in | `reason` | — |
+| `tool.reply` | in | `id`, `ok` | `result`, `error` |
 | `agent.thinking` | out | `text` | — |
 | `tool.call` | out | `id`, `name` | `args` |
 | `tool.result` | out | `id`, `ok` | `result`, `error` |
@@ -69,3 +70,4 @@
 - **PROTO-007** `frameJsonSchema()` 的输出必须与磁盘上 `specs/schemas/frame.schema.json` 完全一致（契约漂移门禁）。
 - **PROTO-008** 每个帧类型都声明了方向，`directionOf()` 与帧表一致，`isInbound()` 可判定。
 - **PROTO-009** 每个帧类型都必须能编码-解码往返（round trip）而不丢字段。
+- **PROTO-010** `tool.reply` 是宿主回填宿主工具结果的**唯一**入站帧（方向 in），必填 `id` 与 `ok`；缺 `ok` 报 `MISSING_FIELD`。

@@ -5,7 +5,8 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { EventLog } from '../src/eventlog/log.ts';
-import { AgentLoop, assembleContext, defineTool } from '../src/loop/loop.ts';
+import { AgentLoop, assembleContext, defineHostTool, defineTool } from '../src/loop/loop.ts';
+import type { HostToolReply } from '../src/loop/loop.ts';
 import type { ContextItem, ModelInput, ModelOutput } from '../src/loop/loop.ts';
 import type { Frame } from '../src/protocol/frames.ts';
 import { scriptedModel } from '../src/loop/fake-model.ts';
@@ -299,6 +300,120 @@ test('每个 step 都写日志，可用 replay 重建每轮五步序列', async 
 
   assert.deepEqual(turns[1], ['assemble', 'infer', 'dispatch', 'emit', 'checkpoint']);
   assert.deepEqual(turns[2], ['assemble', 'infer', 'dispatch', 'emit', 'checkpoint']);
+});
+
+function fakeBridge(responder: (callId: string) => HostToolReply | Promise<HostToolReply>) {
+  const asked: string[] = [];
+  return {
+    asked,
+    async awaitToolReply(callId: string): Promise<HostToolReply> {
+      asked.push(callId);
+      return responder(callId);
+    },
+  };
+}
+
+// @spec LOOP-011
+test('工具分流：宿主工具请宿主代办，进程内工具自己跑，同一轮可混用', async () => {
+  const bridge = fakeBridge(() => ({ ok: true, result: '{"pid":4021}' }));
+  const { frames, sink } = collector();
+  const loop = new AgentLoop({
+    agentId: 'lead',
+    model: scriptedModel([
+      {
+        toolCalls: [
+          { id: 'c1', name: 'echo', args: { v: 1 } },
+          { id: 'c2', name: 'agent.spawn', args: { agentId: 'teammate:ui' } },
+        ],
+      },
+      { done: true },
+    ]),
+    tools: [defineTool('echo', async (args) => `本地跑了 ${JSON.stringify(args)}`), defineHostTool('agent.spawn', '请 Kernel 拉起一个队友进程')],
+    log: tempLog(),
+    sink,
+    hostBridge: bridge,
+  });
+
+  const result = await loop.run({ seed: '派活' });
+  assert.equal(result.reason, 'completed');
+  assert.deepEqual(bridge.asked, ['c2'], '只有宿主工具才去麻烦宿主');
+
+  const results = frames.filter((f) => f.t === 'tool.result');
+  assert.equal(results.length, 2);
+  assert.match(String(results[0]?.result), /本地跑了/);
+  assert.equal(results[1]?.result, '{"pid":4021}');
+});
+
+// @spec LOOP-012
+test('宿主回填：tool.result 成对发出、原样透传，并写入事件日志', async () => {
+  const log = tempLog();
+  const bridge = fakeBridge(() => ({ ok: false, error: '审批被拒绝：install_dependency' }));
+  const { frames, sink } = collector();
+  const loop = new AgentLoop({
+    agentId: 'lead',
+    model: scriptedModel([{ toolCalls: [{ id: 'c9', name: 'fs.write', args: {} }] }, { done: true }]),
+    tools: [defineHostTool('fs.write')],
+    log,
+    sink,
+    hostBridge: bridge,
+  });
+
+  await loop.run({ seed: '写文件' });
+  const toolResults = frames.filter((f) => f.t === 'tool.result');
+  assert.equal(toolResults.length, 1);
+  assert.equal(toolResults[0]?.id, 'c9');
+  assert.equal(toolResults[0]?.ok, false);
+  assert.equal(toolResults[0]?.error, '审批被拒绝：install_dependency');
+
+  const logged = log.read().filter((e) => e.type === 'tool.result');
+  assert.equal(logged.length, 1);
+  assert.equal(logged[0]?.ok, false);
+});
+
+// @spec LOOP-013
+test('宿主工具失败不致命：超时/中断/回填失败都只变成 ok:false，Loop 继续', async () => {
+  const bridge = {
+    async awaitToolReply(callId: string): Promise<HostToolReply> {
+      if (callId === 'c1') throw new Error('HOST_TOOL_TIMEOUT: 宿主 30000ms 未回填');
+      return { ok: false, error: '宿主回填失败' };
+    },
+  };
+  const { frames, sink } = collector();
+  const loop = new AgentLoop({
+    agentId: 'lead',
+    model: scriptedModel([
+      { toolCalls: [{ id: 'c1', name: 'agent.spawn', args: {} }, { id: 'c2', name: 'agent.wait', args: {} }] },
+      { text: '换条路走', done: true },
+    ]),
+    tools: [defineHostTool('agent.spawn'), defineHostTool('agent.wait')],
+    log: tempLog(),
+    sink,
+    hostBridge: bridge,
+  });
+
+  const result = await loop.run({ seed: 'x' });
+  assert.equal(result.reason, 'completed', '一次宿主工具失败不该打死 Loop');
+  const results = frames.filter((f) => f.t === 'tool.result');
+  assert.deepEqual(results.map((f) => f.ok), [false, false]);
+  assert.match(String(results[0]?.error), /HOST_TOOL_TIMEOUT/);
+});
+
+// @spec LOOP-014
+test('没有宿主桥时调用宿主工具 → NO_HOST_BRIDGE，Loop 不崩', async () => {
+  const { frames, sink } = collector();
+  const loop = new AgentLoop({
+    agentId: 'lead',
+    model: scriptedModel([{ toolCalls: [{ id: 'c1', name: 'agent.spawn', args: {} }] }, { done: true }]),
+    tools: [defineHostTool('agent.spawn')],
+    log: tempLog(),
+    sink,
+  });
+
+  const result = await loop.run({ seed: 'x' });
+  assert.equal(result.reason, 'completed');
+  const failure = frames.find((f) => f.t === 'tool.result');
+  assert.equal(failure?.ok, false);
+  assert.match(String(failure?.error), /NO_HOST_BRIDGE/);
 });
 
 // @spec LOOP-010

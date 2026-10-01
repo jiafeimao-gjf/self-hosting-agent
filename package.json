@@ -3,7 +3,7 @@
   "version": "0.0.1",
   "private": true,
   "type": "module",
-  "description": "Agent Client —— 原生多 Agent、独立 Agent Loop 子进程、界面可由 Agent 动态改造的客户端（P0 内核垂直切片）",
+  "description": "Agent Client —— 原生多 Agent、独立 Agent Loop 子进程、界面可由 Agent 动态改造的客户端（P0 内核垂直切片 + P1 多 Agent 编排）",
   "engines": {
     "node": ">=24.0.0"
   },
@@ -13,6 +13,7 @@
     "trace": "node scripts/trace.mjs",
     "check": "npm run trace && npm test",
     "demo": "node src/cli.ts demo",
+    "team": "node src/cli.ts team",
     "typecheck": "node scripts/typecheck.mjs"
   },
   "devDependencies": {}

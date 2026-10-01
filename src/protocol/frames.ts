@@ -24,7 +24,8 @@ export const FRAME_SPECS = {
   'peer.message': {
     direction: 'in',
     required: { from: 'string', body: 'string' },
-    optional: { taskId: 'string', artifacts: 'array' },
+    // kind 是编排语义（brief / report / note），邮箱按它落盘，就必须能过线
+    optional: { kind: 'string', taskId: 'string', artifacts: 'array' },
   },
   'ui.event': {
     direction: 'in',
@@ -40,6 +41,15 @@ export const FRAME_SPECS = {
     direction: 'in',
     required: { reason: 'string' },
     optional: {},
+  },
+  /**
+   * 宿主工具桥：Loop 调不动「拉起一个进程」这种事，只能请 Kernel 代办。
+   * Loop 发 tool.call（out），宿主执行后用它把结果回填（in）。
+   */
+  'tool.reply': {
+    direction: 'in',
+    required: { id: 'string', ok: 'boolean' },
+    optional: { result: 'string', error: 'string' },
   },
   'agent.thinking': {
     direction: 'out',

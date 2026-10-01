@@ -140,6 +140,20 @@ test('每个帧类型都声明方向，directionOf / isInbound 与帧表一致',
   assert.equal(isInbound({ t: 'loop.done', reason: 'completed' }), false);
 });
 
+// @spec PROTO-010
+test('tool.reply 是宿主回填宿主工具结果的唯一入站帧', () => {
+  assert.equal(directionOf('tool.reply'), 'in');
+  assert.equal(isInbound({ t: 'tool.reply', id: 'c41', ok: true }), true);
+
+  const missing = validateFrame({ t: 'tool.reply', id: 'c41' });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.ok === false && missing.error.code, 'MISSING_FIELD');
+  assert.equal(missing.ok === false && missing.error.field, 'ok');
+
+  const failed = validateFrame({ t: 'tool.reply', id: 'c41', ok: false, error: 'HOST_TOOL_TIMEOUT' });
+  assert.equal(failed.ok, true);
+});
+
 // @spec PROTO-009
 test('每个帧类型都能编码-解码往返且不丢字段', () => {
   const samples: Record<string, Record<string, unknown>> = {
@@ -148,6 +162,7 @@ test('每个帧类型都能编码-解码往返且不丢字段', () => {
     'ui.event': { t: 'ui.event', target: 'budget_bar', event: 'click', payload: { range: 'today' } },
     'approval.reply': { t: 'approval.reply', id: 'c41', decision: 'allow_once', reason: '人类同意' },
     interrupt: { t: 'interrupt', reason: 'human_took_over' },
+    'tool.reply': { t: 'tool.reply', id: 'c41', ok: true, result: '{"pid":4021}' },
     'agent.thinking': { t: 'agent.thinking', agent: 'lead', seq: 118, text: '正在设计…' },
     'tool.call': { t: 'tool.call', id: 'c41', name: 'write_file', args: { path: 'x.ts' } },
     'tool.result': { t: 'tool.result', id: 'c41', ok: true, result: 'written' },

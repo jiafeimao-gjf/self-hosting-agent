@@ -23,10 +23,18 @@ Loop 是被 Kernel 托管的最小执行单元：**一个 Agent 一个进程，�
 Loop 不 import 上层实现，只依赖接口，由宿主注入：
 
 ```ts
-interface ModelPort { step(input: ModelInput): Promise<ModelOutput> }
-interface UiGuard   { check(patch: UiPatch): { ok: true } | { ok: false; reason: string } }
-interface LoopSink  { onEvent(event: LoggedEvent): void; onFrame(frame: Frame): void }
+interface ModelPort     { step(input: ModelInput): Promise<ModelOutput> }
+interface UiGuard       { check(patch: UiPatch): { ok: true } | { ok: false; reason: string } }
+interface LoopSink      { onFrame(frame: Frame): void }
+interface HostBridgePort {
+  /** 请宿主代办一个宿主工具调用，并等它回填（tool.reply 帧） */
+  awaitToolReply(callId: string, options: { timeoutMs: number }): Promise<{ ok: boolean; result?: string; error?: string }>
+}
 ```
+
+**工具分两类。** `execute: 'loop'`（默认）在 Loop 进程内跑；`execute: 'host'` 是**宿主工具**——「拉起一个进程」「派发任务」这类事只有 Kernel 干得了，Loop 只能发 `tool.call` 请宿主代办，再由宿主用 `tool.reply`（入站帧）回填。这是依赖倒置的必然结果：被托管的进程不能反向控制内核。
+
+宿主工具的失败（超时、被中断、回填 ok:false）**一律只产生 `tool.result{ok:false}`，不中断 Loop**——Agent 应该有机会换条路走，而不是被一次工具失败打死。
 
 这样 Loop 既能被假模型在 CI 里离线驱动，也不会为了校验 View Spec 而反向依赖 Surface（违反 SPEC-000 §2 的依赖方向）。
 
@@ -50,3 +58,7 @@ interface LoopSink  { onEvent(event: LoggedEvent): void; onFrame(frame: Frame): 
 - **LOOP-008** 模型声明完成时终态为 `completed`，并写入检查点事件（含快照水位）。
 - **LOOP-009** 每个 step 都写入事件日志，且可用 `replay` 重建出每轮的五步序列。
 - **LOOP-010** 上下文按预算裁剪：超出上限时保留系统提示与最近的条目，且裁剪过程本身不丢事件。
+- **LOOP-011** 工具分流：`execute:'host'` 的工具由宿主执行（Loop 只发 `tool.call` 并等待回填），`execute:'loop'` 的工具在进程内执行，两者可在同一轮混用。
+- **LOOP-012** 宿主回填：收到 `tool.reply` 后必须成对发出 `tool.result`，`result` / `error` 原样透传，并写入事件日志。
+- **LOOP-013** 宿主工具失败不致命：超时、被中断、回填 `ok:false` 都只产生 `tool.result{ok:false}`，Loop 继续到下一轮。
+- **LOOP-014** 没有接到宿主桥时调用宿主工具 → `tool.result{ok:false}` 且错误信息含 `NO_HOST_BRIDGE`，Loop 不崩。
