@@ -1,6 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
+import http from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -184,6 +185,56 @@ test('子进程的每一帧都写进事件日志（审计）', async () => {
     assert.ok(log.read().some((event) => event.type === 'agent.spawn'));
   } finally {
     await pool.shutdown();
+  }
+});
+
+// @spec KERN-011
+test('模型端口可切换：AGENT_MODEL=http 时子进程走真 HTTP 端口（本机假服务）', async () => {
+  const requests: string[] = [];
+  const server = http.createServer((req, res) => {
+    let body = '';
+    req.on('data', (chunk) => {
+      body += String(chunk);
+    });
+    req.on('end', () => {
+      requests.push(body);
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(
+        JSON.stringify({
+          choices: [{ message: { role: 'assistant', content: '你好，我是真模型端口' } }],
+          usage: { total_tokens: 7 },
+        }),
+      );
+    });
+  });
+  await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', () => resolve()));
+  const address = server.address();
+  const port = typeof address === 'object' && address !== null ? address.port : 0;
+
+  const pool = new AgentPool();
+  const handle = pool.spawn({
+    agentId: 'lead',
+    logDir: tempDir('kern11'),
+    env: {
+      AGENT_MODEL: 'http',
+      AGENT_BASE_URL: `http://127.0.0.1:${port}/v1`,
+      AGENT_API_KEY: 'test-key',
+      AGENT_MODEL_NAME: 'fake-model',
+    },
+  });
+
+  try {
+    const thinking = waitForFrame(handle, (frame) => frame.t === 'agent.thinking');
+    const done = waitForFrame(handle, (frame) => frame.t === 'loop.done');
+    handle.send({ t: 'human.message', text: '你好' });
+
+    assert.match(String((await thinking).text), /真模型端口/);
+    assert.equal((await done).reason, 'completed');
+    assert.equal(requests.length, 1, '应当真的发了 HTTP 请求');
+    assert.match(requests[0] as string, /fake-model/);
+  } finally {
+    await pool.shutdown();
+    server.close();
   }
 });
 

@@ -21,6 +21,7 @@ import type {
 } from '../loop/loop.ts';
 import { EventLog } from '../eventlog/log.ts';
 import { scriptedModel } from '../loop/fake-model.ts';
+import { createHttpModel } from '../loop/http-model.ts';
 
 function parseArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -101,9 +102,20 @@ const hostToolNames = (args['host-tools'] ?? '')
   .filter((name) => name !== '');
 const hostToolTimeoutMs = Number(args['host-tool-timeout'] ?? DEFAULT_HOST_TOOL_TIMEOUT_MS);
 
+/** 宿主工具的自述：真模型靠它知道有哪些手段可用 */
+const HOST_TOOL_DESCRIPTIONS: Record<string, string> = {
+  'agent.spawn': '拉起一个新的 Agent 子进程（需要人类审批）并投递 brief。参数：agentId, brief',
+  'agent.send': '经邮箱把消息投递给另一个 Agent。参数：to, body',
+  'agent.wait': '等到列出的 Agent 都回报。参数：ids, timeoutMs',
+  'ui.render': '把一份 View Spec 经校验后落进界面文档。参数：scope, op(mount|replace|patch), spec',
+  'task.create': '在任务板上建任务。参数：id?, subject, description?, writeScopes?, blockedBy?',
+  'task.claim': 'CAS 认领任务。参数：id, expectedRevision?',
+  'task.complete': 'CAS 完成任务。参数：id, expectedRevision?',
+};
+
 const tools: ToolSpec[] = [
   defineTool('budget', (toolArgs) => ({ range: toolArgs.range ?? 'today', used: 620000, limit: 1000000 }), '读取预算'),
-  ...hostToolNames.map((name) => defineHostTool(name)),
+  ...hostToolNames.map((name) => defineHostTool(name, HOST_TOOL_DESCRIPTIONS[name])),
 ];
 
 // ── 宿主工具桥：把 tool.call 发出去，等 tool.reply 回来 ──
@@ -173,6 +185,33 @@ function makeModel(): ModelPort {
     const script = JSON.parse(args.script) as ModelOutput[];
     return withDelay(scriptedModel(script), stepDelayMs);
   }
+
+  // 真模型端口：AGENT_MODEL=http 时走 OpenAI 兼容 HTTP 接口
+  const kind = args.model ?? process.env.AGENT_MODEL ?? 'demo';
+  if (kind === 'http') {
+    const baseUrl = args['base-url'] ?? process.env.AGENT_BASE_URL ?? '';
+    const apiKey = args['api-key'] ?? process.env.AGENT_API_KEY ?? '';
+    const modelName = args['model-name'] ?? process.env.AGENT_MODEL_NAME ?? '';
+    const timeoutRaw = args['model-timeout'] ?? process.env.AGENT_MODEL_TIMEOUT;
+
+    if (baseUrl === '' || modelName === '') {
+      // 配置不全就明确报错，而不是偷偷退回假模型假装一切正常
+      return {
+        async step() {
+          throw new Error('模型端口配置不全：http 模式需要 AGENT_BASE_URL 与 AGENT_MODEL_NAME');
+        },
+      };
+    }
+
+    const port = createHttpModel({
+      baseUrl,
+      apiKey,
+      model: modelName,
+      ...(timeoutRaw === undefined ? {} : { timeoutMs: Number(timeoutRaw) }),
+    });
+    return withDelay(port, stepDelayMs);
+  }
+
   return withDelay(demoModel(), stepDelayMs);
 }
 

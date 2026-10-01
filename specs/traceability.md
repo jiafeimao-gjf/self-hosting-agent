@@ -32,6 +32,7 @@
 | **KERN-008** | specs/004-kernel.md | 审批门默认拒绝；`allow_always` 后同动作自动放行；决策历史可查。 | `test/kernel.test.ts` · 审批门默认拒绝；allow_always 之后同动作自动放行；历史可查 |
 | **KERN-009** | specs/004-kernel.md | 子进程的每一帧都写进事件日志（`agent.frame` 事件）。 | `test/kernel.test.ts` · 子进程的每一帧都写进事件日志（审计） |
 | **KERN-010** | specs/004-kernel.md | 进程退出后 `exited` 只 resolve 一次，`alive` 变为 false，池中可被清理。 | `test/kernel.test.ts` · 进程退出后 exited 只 resolve 一次，alive 为 false，池中被清理 |
+| **KERN-011** | specs/004-kernel.md | 模型端口可切换：子进程在 `AGENT_MODEL=http` 时走 OpenAI 兼容 HTTP 端口，且能真实收到模型的文本回复（用本机假服务验证接线，不碰外网）。 | `test/kernel.test.ts` · 模型端口可切换：AGENT_MODEL=http 时子进程走真 HTTP 端口（本机假服务） |
 | **LOG-001** | specs/002-event-log.md | `append` 返回的事件带自增 `seq`（从 1 开始）与合法 `ts`，且**立即落盘**：新建实例重新读取能看到同样的事件。 | `test/eventlog.test.ts` · append 返回自增 seq 与合法 ts，且立即落盘（新实例可读回） |
 | **LOG-002** | specs/002-event-log.md | 交错调用（await 之间穿插其它 append）不产生重复或跳号的 `seq`。 | `test/eventlog.test.ts` · 交错 append 不产生重复或跳号的 seq |
 | **LOG-003** | specs/002-event-log.md | `read()` 按 `seq` 升序返回全部事件；`readFrom(seq)` 返回 `seq ≥ 给定值` 的子集。 | `test/eventlog.test.ts` · read 升序返回全部事件，readFrom 返回水位之后的子集 |
@@ -119,7 +120,7 @@
 
 ## 统计
 
-- 验收标准：**112** 条
-- 已覆盖：**112** 条
+- 验收标准：**113** 条
+- 已覆盖：**113** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处
