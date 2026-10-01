@@ -13,6 +13,7 @@ import {
   renderFragment,
   renderViewSpec,
 } from '../src/client/renderer.js';
+import { shouldApplySurface } from '../src/client/app.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const clientDir = path.join(here, '..', 'src', 'client');
@@ -255,7 +256,10 @@ test('界面面板是 sandbox iframe srcdoc，document 事件只更新 srcdoc �
   assert.ok(appJs.includes("new EventSource('/api/stream')"));
   assert.ok(appJs.includes("addEventListener('document'"));
   assert.ok(appJs.includes('dom.surface.srcdoc = html'), 'document 事件只更新 srcdoc');
-  assert.ok(appJs.includes('html !== state.html'), '内容没变就不重写 srcdoc');
+  // 老实现这里是 `html !== state.html`（内容没变就不重写）——正是它让首帧永久空白的：
+  // 首帧被 iframe 初始加载覆盖后，缓存却认定「画过了」。现在改成强制重画 + 看画没画上。
+  assert.ok(appJs.includes('force: true'), 'document 事件必须强制重画，不猜缓存');
+  assert.ok(appJs.includes('shouldApplySurface('), '要不要画由纯函数判定，可被测试守住');
   assert.ok(appJs.includes('dom.version.textContent'), '版本号要跟着 document 事件前进');
   assert.ok(appJs.includes('dom.surfaceVersion.textContent'));
 
@@ -304,6 +308,30 @@ test('app.js 订阅 /api/stream 处理四类事件，并用 POST 调 message / i
   const empty = app.normalizeState(null);
   assert.deepEqual(empty, { version: 0, html: '', scopes: [], agents: [], tasks: [], messages: [], events: [] });
   assert.deepEqual(app.projectMessages('不是数组'), []);
+});
+
+// @spec UI-009
+test('首帧不会被吞：没画上就必须再画，document 事件强制重画', () => {
+  // 空 html 不画
+  assert.equal(shouldApplySurface({ nextHtml: '', prevHtml: '', painted: false }), false);
+
+  // 新内容且还没画上 → 画
+  assert.equal(shouldApplySurface({ nextHtml: '<p>a</p>', prevHtml: '', painted: false }), true);
+
+  // 内容没变但**从没画上**（首帧被初始加载覆盖的情形）→ 仍然要画，这是这个 bug 的要害
+  assert.equal(shouldApplySurface({ nextHtml: '<p>a</p>', prevHtml: '<p>a</p>', painted: false }), true);
+
+  // 内容没变且确实画上了 → 不重复画
+  assert.equal(shouldApplySurface({ nextHtml: '<p>a</p>', prevHtml: '<p>a</p>', painted: true }), false);
+
+  // Agent 明确改了界面 → 强制重画
+  assert.equal(shouldApplySurface({ nextHtml: '<p>a</p>', prevHtml: '<p>a</p>', painted: true, force: true }), true);
+
+  // 客户端必须等 iframe 首次加载完成后再补画
+  const appSource = readClient('app.js');
+  assert.match(appSource, /addEventListener\('load'/);
+  assert.match(appSource, /pendingHtml/);
+  assert.match(appSource, /iframeLoaded/);
 });
 
 // @spec UI-008

@@ -203,6 +203,19 @@ export function projectMessages(messages) {
  * 字段名尚未冻结，因此这里对常见别名做防御性读取，缺字段一律退化成空，
  * 绝不因为服务端换了个字段名就白屏。
  */
+/**
+ * 要不要把这份 html 写进沙箱？
+ *
+ * 见过的真实故障：首帧赋值被 iframe 尚未完成的初始加载覆盖，而缓存又认定
+ * 「这份 html 已经画过了」，于是面板永远空白。所以判定必须看**画没画上**，
+ * 而不是只看「内容变没变」。
+ */
+export function shouldApplySurface({ nextHtml, prevHtml, painted, force = false }) {
+  if (typeof nextHtml !== 'string' || nextHtml.length === 0) return false;
+  if (force) return true;
+  return nextHtml !== prevHtml || painted !== true;
+}
+
 export function normalizeState(raw) {
   const state = isRecord(raw) ? raw : {};
   const doc = isRecord(state.document)
@@ -247,9 +260,25 @@ function boot() {
   const state = {
     version: 0,
     html: '',
+    /** iframe 是否已经跑完它自己的首次加载（首帧必须等它，否则会被覆盖） */
+    iframeLoaded: false,
+    /** 首帧期间收到的 html，等 load 后补画 */
+    pendingHtml: null,
+    /** 是否已经把某一份 html 真正写进沙箱 */
+    painted: false,
     /** 已发出但还没回填结果的 tool.call：id → { call, node } */
     tools: new Map(),
   };
+
+  // 沙箱的首次加载完成后，把首帧期间攒下的 html 补画上（否则会被初始加载覆盖）
+  dom.surface.addEventListener('load', () => {
+    state.iframeLoaded = true;
+    if (state.pendingHtml === null) return;
+    const html = state.pendingHtml;
+    state.pendingHtml = null;
+    dom.surface.srcdoc = html;
+    state.painted = true;
+  });
 
   function setConnection(status) {
     dom.conn.dataset.state = status;
@@ -268,15 +297,30 @@ function boot() {
     }
   }
 
-  /** 只更新沙箱 iframe 的 srcdoc —— 宿主页面永远不刷新 */
-  function setSurface(html, version) {
+  /**
+   * 只更新沙箱 iframe 的 srcdoc —— 宿主页面永远不刷新。
+   *
+   * 有个真实的坑：页面刚加载时 iframe 还在跑它自己的初始 srcdoc（空文档），
+   * 这时候赋值会被那次尚未完成的加载覆盖掉，面板就永远空着。
+   * 所以「首帧」必须等 iframe 的 load 之后再补一次，且同一份 html 在没有真正
+   * 画上去之前不能被缓存吞掉。
+   */
+  function setSurface(html, version, options = {}) {
     if (typeof version === 'number' && Number.isFinite(version)) state.version = version;
     dom.version.textContent = `v${state.version}`;
     dom.surfaceVersion.textContent = `v${state.version}`;
-    if (typeof html === 'string' && html.length > 0 && html !== state.html) {
-      state.html = html;
-      dom.surface.srcdoc = html;
+
+    if (!shouldApplySurface({ nextHtml: html, prevHtml: state.html, painted: state.painted, force: options.force === true })) {
+      return;
     }
+    state.html = html;
+
+    if (!state.iframeLoaded) {
+      state.pendingHtml = html; // 等 load 事件来了再补
+      return;
+    }
+    dom.surface.srcdoc = html;
+    state.painted = true;
   }
 
   function applyState(raw) {
@@ -330,7 +374,8 @@ function boot() {
       typeof data.html === 'string' && data.html.length > 0
         ? data.html
         : renderViewSpec(data.spec ?? data.view ?? data);
-    setSurface(html, typeof data.version === 'number' ? data.version : state.version);
+    // Agent 明确改了界面：强制重画，不去猜缓存
+    setSurface(html, typeof data.version === 'number' ? data.version : state.version, { force: true });
     pushTimeline({ type: 'ui.document', agent: 'surface', ts: new Date().toISOString() });
   }
 
