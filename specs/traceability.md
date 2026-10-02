@@ -62,6 +62,7 @@
 | **CONV-006** | specs/020-conversations.md | 每个对话的事件流互不串扰：给 A 发消息只会在 A 的流上看到事件。 | `test/client-conversations-ui.test.ts` · 每个对话一条独立 SSE：切换时关旧流、按新 id 重开，事件不串扰<br>`test/conversations.test.ts` · 对话之间的事件流互不串扰 |
 | **CONV-007** | specs/020-conversations.md | 切换对话不丢状态：A 渲染过界面文档后切到 B 再切回 A，A 的文档版本与内容原样还在。 | `test/client-conversations-ui.test.ts` · 切走再切回：本地绘制缓存作废并重新拉取该对话的 state，界面文档原样重画<br>`test/conversations.test.ts` · 切换对话不丢状态：A 的界面文档切走再切回来原样还在 |
 | **CONV-008** | specs/020-conversations.md | 删除对话会回收它的 Agent 子进程（不留孤儿）。 | `test/conversations.test.ts` · 删除对话会回收它的 Agent 子进程，不留孤儿 |
+| **CONV-009** | specs/020-conversations.md | 前后端版本漂移要可诊断：新客户端打在缺这些接口的旧服务端上会拿到 404/405，此时必须明确提示「服务端是旧版本，重启后再试」，而不是甩一个 `METHOD_NOT_ALLOWED`；对话/文件/命令三条路径口径一致。 | `test/client-conversations-ui.test.ts` · 版本漂移要可诊断：旧服务端 404/405 明确提示重启，而不是吐 METHOD_NOT_ALLOWED |
 | **DIAG-001** | specs/018-diagnostics.md | 记录器按级别过滤：低于阈值的记录既不落盘也不进 sink；每条含 `ts/level/scope/message`，可带结构化 `data`。 | `test/logging.test.ts` · 记录器按级别过滤，每条含 ts/level/scope/message 且可带结构化 data |
 | **DIAG-002** | specs/018-diagnostics.md | 记日志失败不影响主流程：目录不可写时自动退化为内存日志，调用方不抛异常。 | `test/logging.test.ts` · 记日志失败不影响主流程：目录建不出来就退化为内存日志，调用方不抛异常 |
 | **DIAG-003** | specs/018-diagnostics.md | 子进程 stderr 被消费：内容逐行写入诊断日志，且带 `agent:<id>` 标签（补之前它没有任何订阅者）。 | `test/logging.test.ts` · 子进程 stderr 被消费：逐行写进诊断日志并带 agent 标签 |
@@ -246,7 +247,7 @@
 
 ## 统计
 
-- 验收标准：**239** 条
-- 已覆盖：**239** 条
+- 验收标准：**240** 条
+- 已覆盖：**240** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

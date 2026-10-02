@@ -9,16 +9,20 @@ import {
   DEFAULT_CONVERSATION,
   EMPTY_CONVERSATIONS_TEXT,
   EMPTY_FILES_TEXT,
+  STALE_SERVER_TEXT,
   TRUNCATED_TEXT,
   canDeleteConversation,
   commandActionOf,
+  commandErrorText,
   commandRequest,
   createConversationSwitcher,
   createWorkspacePanel,
   deleteConversationUrl,
+  fileListErrorText,
   formatBytes,
   formatMtime,
   isCommandText,
+  isStaleServer,
   normalizeCommandResult,
   normalizeConversationList,
   normalizeWorkspaceFile,
@@ -522,4 +526,28 @@ test('文件页签：列表只给元信息，点击才动态加载内容，纯�
   assert.ok(appJs.includes('workspacePanel.openFile('));
   assert.ok(appJs.includes("target === 'files'"));
   assert.equal(appJs.includes('fileContent.innerHTML'), false);
+});
+
+// @spec CONV-009
+test('版本漂移要可诊断：旧服务端 404/405 明确提示重启，而不是吐 METHOD_NOT_ALLOWED', () => {
+  assert.equal(isStaleServer(404), true);
+  assert.equal(isStaleServer(405), true);
+  assert.equal(isStaleServer(500), false);
+  assert.equal(isStaleServer(0), false);
+
+  // 服务端返回的原始错误（METHOD_NOT_ALLOWED）不能盖过更有用的诊断
+  const command = commandErrorText({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405);
+  assert.equal(command, STALE_SERVER_TEXT);
+  assert.equal(command.includes('METHOD_NOT_ALLOWED'), false);
+
+  const files = fileListErrorText({ ok: false, error: 'METHOD_NOT_ALLOWED' }, 405);
+  assert.ok(files.includes(STALE_SERVER_TEXT), `文件路径口径要一致：${files}`);
+
+  // 具体诊断优先：服务端说清了原因就用它，不能被版本提示盖掉
+  assert.equal(fileListErrorText({ ok: false, error: 'PATH_ESCAPE: 不接受 .. 路径段' }, 404), '加载文件列表失败：PATH_ESCAPE: 不接受 .. 路径段');
+  assert.equal(fileListErrorText({ ok: false, error: 'PATH_ESCAPE: x' }, 405).includes('PATH_ESCAPE'), true);
+
+  // 真错误仍然照原样透出
+  assert.equal(commandErrorText({ ok: false, error: '未知命令：/x' }, 400), '未知命令：/x');
+  assert.equal(fileListErrorText(null, 0).includes('加载文件列表失败'), true);
 });

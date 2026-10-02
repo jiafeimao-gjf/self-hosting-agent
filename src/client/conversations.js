@@ -280,10 +280,31 @@ export function normalizeCommandResult(raw) {
   };
 }
 
-/** 服务端错误 / 网络失败 → 可读中文；三种端点共用同一套抽取规则 */
+/**
+ * 客户端文件每次刷新都从磁盘读，**服务端进程却还停在启动时的那份代码**。
+ * 于是新界面打在旧服务端上会拿到 404 / 405 —— 这时说「服务端是旧版本，重启一下」
+ * 比甩一个 METHOD_NOT_ALLOWED 有用得多。
+ */
+export function isStaleServer(status) {
+  return status === 404 || status === 405;
+}
+
+export const STALE_SERVER_TEXT = '服务端是旧版本（没有多对话接口）：重启 npm run serve 之后再试';
+
+/** 这些是「没有信息量」的通用错误：出现它们说明不是业务拒绝，而是路由/方法都不认识 */
+const GENERIC_SERVER_ERROR = /^(METHOD_NOT_ALLOWED|NOT_FOUND|BAD_REQUEST)$/;
+
+/**
+ * 服务端错误 / 网络失败 → 可读中文；对话 / 文件 / 命令三条路径共用同一套规则。
+ *
+ * 优先级刻意如此：**服务端给的具体诊断优先**（`PATH_ESCAPE` 这类不能被版本提示盖掉），
+ * 只有当 404/405 配上一句没有信息量的通用错误时，才判定为前后端版本漂移。
+ */
 function serverErrorText(raw, status) {
   const item = isRecord(raw) ? raw : {};
   const direct = str(item.error) || str(item.message) || str(item.reason);
+  if (direct.length > 0 && !GENERIC_SERVER_ERROR.test(direct.trim())) return direct;
+  if (isStaleServer(status)) return STALE_SERVER_TEXT;
   if (direct.length > 0) return direct;
   if (typeof status === 'number' && Number.isFinite(status) && status > 0) return `HTTP ${status}`;
   return '服务端没有返回可读信息';

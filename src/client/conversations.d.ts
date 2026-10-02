@@ -140,6 +140,11 @@ export declare function normalizeCommandResult(raw: unknown): {
 /** 命令失败 / 网络失败 → 可读中文 */
 export declare function commandErrorText(raw: unknown, status?: number): string;
 
+/** 服务端返回 404/405 → 多半是前后端版本漂移（客户端从磁盘读，服务端还停在旧进程） */
+export declare function isStaleServer(status?: number): boolean;
+
+export declare const STALE_SERVER_TEXT: string;
+
 /** 命令结果 → 系统消息 HTML（文本全部转义；失败带 `is-fail`） */
 export declare function renderCommandResult(raw: unknown, commandText?: string): string;
 
