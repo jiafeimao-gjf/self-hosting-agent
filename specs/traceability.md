@@ -219,6 +219,7 @@
 | **UI-008** | specs/012-client-ui.md | 对话流把人类消息靠右、`agent.thinking` 靠左，工具调用渲染成「谁 · 调了什么 · ok/失败」的摘要行，时间线按事件类型上色，且所有进入 DOM 的文本都经过 `escapeHtml`。 | `test/client-ui.test.ts` · 对话流：人类靠右、thinking 靠左、工具调用是可读摘要行，所有文本都转义 |
 | **UI-009** | specs/012-client-ui.md | 首帧不会被吞：iframe 尚未完成初始加载时收到的 html 先记为待画、`load` 之后补画；`document` 事件强制重画；判定「要不要画」看的是**画没画上**而不是「内容变没变」。（真实故障：首帧赋值被 iframe 尚未完成的初始加载覆盖，缓存又认定「这份 html 画过了」，于是面板永久空白。） | `test/client-ui.test.ts` · 首帧不会被吞：没画上就必须再画，document 事件强制重画 |
 | **UI-010** | specs/012-client-ui.md | 忙碌指示：Agent 干活期间对话区有可见反馈（脉动点 + 「已等 N 秒」），`done` 时立即收掉。真模型一轮可能几十秒，没有它人类会以为卡死。 | `test/client-ui.test.ts` · 忙碌指示：Agent 干活时有可见反馈并显示已等待秒数，收工时收掉 |
+| **UI-011** | specs/012-client-ui.md | 检查器可最小化：标题栏上的按钮收起/展开（`aria-expanded` / `aria-controls` 同步），收起时只留标题栏、腾出的高度给上半区，不做整页刷新；选择记在 localStorage，刷新后保持。 | `test/client-ui.test.ts` · 检查器可最小化：只切属性、不刷页面，状态记在 localStorage |
 | **UI2-001** | specs/014-client-selfhost-ui.md | `app.js` 用 SSE 订阅 `client.changed`（事件名含点号），把 `write` / `revert` 两类变更归一化后追加进事件时间线，且对坏 data 不抛异常。 | `test/client-selfhost-ui.test.ts` · 订阅 client.changed：写 / 回滚都归一化，并进事件时间线 |
 | **UI2-002** | specs/014-client-selfhost-ui.md | `path` 以 `.css` 结尾时，按文件名找到对应的 `<link rel="stylesheet">` 并把 href 换成带 cache-bust 查询串（`?v=<版本>&t=<时间戳>`）的新地址；热替换不刷新页面（`app.js` 内无自动刷新路径）。 | `test/client-selfhost-ui.test.ts` · CSS 变更走无刷新热替换：按文件名定位 <link> 并加 cache-bust 查询串 |
 | **UI2-003** | specs/014-client-selfhost-ui.md | `.js` / `.html` 变更显示「刷新以生效」横幅，横幅上的刷新按钮**只有人类点击**才导航到当前地址（等价整页刷新）；`app.js` 不含 UI-006 禁止的 `location.reload` / `location.href =` 字面量，不存在自动刷新。 | `test/client-selfhost-ui.test.ts` · JS / HTML 变更显示横幅，刷新按钮只由人类点击触发，绝不自动刷新 |
@@ -247,7 +248,7 @@
 
 ## 统计
 
-- 验收标准：**240** 条
-- 已覆盖：**240** 条
+- 验收标准：**241** 条
+- 已覆盖：**241** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

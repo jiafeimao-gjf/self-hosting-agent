@@ -369,22 +369,51 @@ test('测试连接调 POST /api/settings/test：成功显示延迟与回复片�
 
 // @spec UI3-008
 test('防御与安全：Key 不进浏览器存储 / 日志 / URL，文本全部转义，坏输入不抛异常', () => {
-  for (const [name, source] of [
-    ['settings.js', settingsJs],
-    ['app.js', appJs],
-  ] as [string, string][]) {
-    for (const banned of [
-      'localStorage',
-      'sessionStorage',
-      'document.cookie',
-      'console.log',
-      'console.error',
-      'console.warn',
-      'indexedDB',
-      'history.pushState',
-    ]) {
-      assert.equal(source.includes(banned), false, `${name} 不得出现 ${banned}`);
-    }
+  // settings.js 是密钥真正流经的地方：那里一律不许碰浏览器存储 / 日志 / 地址栏
+  for (const banned of [
+    'localStorage',
+    'sessionStorage',
+    'document.cookie',
+    'console.log',
+    'console.error',
+    'console.warn',
+    'indexedDB',
+    'history.pushState',
+  ]) {
+    assert.equal(settingsJs.includes(banned), false, `settings.js 不得出现 ${banned}`);
+  }
+
+  // app.js 允许为**纯 UI 偏好**（比如检查器是否收起）用 localStorage —— 那条规则的本意
+  // 是「密钥不进存储」，不是「任何偏好都不许记」。所以这里禁的是另外那些没有正当用途的 API，
+  // 而 localStorage 用一条精确规则管住：只许写固定前缀的 UI 键，且**不能带任何密钥类字段**。
+  for (const banned of [
+    'sessionStorage',
+    'document.cookie',
+    'console.log',
+    'console.error',
+    'console.warn',
+    'indexedDB',
+    'history.pushState',
+  ]) {
+    assert.equal(appJs.includes(banned), false, `app.js 不得出现 ${banned}`);
+  }
+
+  const storageWrites = appJs.match(/localStorage\.setItem\([^)]*\)/g) ?? [];
+  for (const call of storageWrites) {
+    assert.equal(
+      /apiKey|hasApiKey|maskedKey|api_key|token|secret|password/i.test(call),
+      false,
+      `浏览器存储里绝不许写密钥类字段：${call}`,
+    );
+    // 键要么是带命名空间的字面量，要么是一个 *_KEY 常量 —— 不允许现拼字符串
+    assert.match(call, /'agent-client:|_KEY\b/, `只允许写带命名空间的 UI 偏好键：${call}`);
+  }
+
+  // 而这些常量本身也必须带命名空间前缀（防止有人绕成 `const K = 'k'`）
+  const keyConstants = appJs.match(/const\s+\w*KEY\w*\s*=\s*'[^']*'/g) ?? [];
+  assert.ok(keyConstants.length > 0, 'app.js 里的存储键应当是具名常量');
+  for (const declaration of keyConstants) {
+    assert.match(declaration, /'agent-client:/, `${declaration} 必须带命名空间前缀`);
   }
   // Key 只经请求体送出：端点固定，绝不拼进 URL
   assert.ok(settingsJs.includes("'/api/settings'"));

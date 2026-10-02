@@ -421,3 +421,40 @@ test('忙碌指示：Agent 干活时有可见反馈并显示已等待秒数，�
   // 连接字符串也不许出现远程资源（离线单页）
   assert.equal(/https?:\/\//.test(styleCss), false);
 });
+
+// @spec UI-011
+test('检查器可最小化：只切属性、不刷页面，状态记在 localStorage', () => {
+  // 标题栏上要有一个真正的按钮（键盘天然可达），并且声明它控制谁
+  assert.match(indexHtml, /id="inspector-toggle"/);
+  assert.match(indexHtml, /aria-expanded="true"/);
+  assert.match(indexHtml, /aria-controls="inspector-body"/);
+  assert.match(indexHtml, /id="inspector-body"/);
+  assert.match(indexHtml, /id="inspector-toggle-label"/);
+
+  // 收起 = 给 .grid 加 data-inspector，CSS 据此把下半区压成 auto 并藏起内容
+  assert.match(appJs, /applyInspectorCollapsed/);
+  assert.match(appJs, /setAttribute\('data-inspector', 'collapsed'\)/);
+  assert.match(appJs, /removeAttribute\('data-inspector'\)/);
+  assert.match(appJs, /aria-expanded/);
+  assert.match(styleCss, /\.grid\[data-inspector='collapsed'\]/);
+  assert.match(styleCss, /#inspector-body\s*\{\s*display:\s*none/);
+
+  // 与「切到浏览器就把上半区加高」那条规则不能打架：折叠规则必须特异性更高、
+  // 且排在它之后，否则收起时检查器那一行仍会白占一半高度（真机上发生过）
+  const browserRuleAt = styleCss.indexOf(".grid:has(.zone-surface[data-active-panel='browser'])");
+  const collapsedRuleAt = styleCss.indexOf(".grid[data-inspector='collapsed']:has(.zone-inspector)");
+  assert.ok(browserRuleAt >= 0 && collapsedRuleAt >= 0, '两条规则都要在');
+  assert.ok(collapsedRuleAt > browserRuleAt, '折叠规则要排在浏览器加高规则之后');
+  assert.match(styleCss, /\.grid\[data-inspector='collapsed'\]:has\(/);
+
+  // 记住选择，但绝不整页刷新
+  assert.match(appJs, /localStorage\.setItem\(INSPECTOR_KEY/);
+  assert.match(appJs, /localStorage\.getItem\(INSPECTOR_KEY/);
+  assert.equal(appJs.includes('location.reload'), false);
+
+  // 收起态不能把四个卡片从 DOM 里删掉——只隐藏，展开后原样回来
+  assert.match(indexHtml, /id="agents"/);
+  assert.match(indexHtml, /id="tasks"/);
+  assert.match(indexHtml, /id="timeline"/);
+  assert.match(indexHtml, /id="sources"/);
+});

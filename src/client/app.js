@@ -470,6 +470,9 @@ function boot() {
     browserEmpty: document.getElementById('browser-empty'),
     browserLastEvent: document.getElementById('browser-last-event'),
     panelTabs: Array.from(document.querySelectorAll('[data-panel-tab]')),
+    inspectorToggle: document.getElementById('inspector-toggle'),
+    inspectorToggleLabel: document.getElementById('inspector-toggle-label'),
+    grid: document.querySelector('.grid'),
     panelBodies: Array.from(document.querySelectorAll('[data-panel]')),
     // SPEC-020：顶栏多对话切换器与输入框的命令提示
     conversationSelect: document.getElementById('conversation-select'),
@@ -1113,6 +1116,54 @@ function boot() {
   for (const tab of dom.panelTabs) {
     tab.addEventListener('click', () => showPanel(tab.getAttribute('data-panel-tab')));
   }
+
+  /**
+   * SPEC-012 UI-011：检查器可以最小化。
+   *
+   * 收起时只留标题栏（进程表/任务板/时间线/源码一起收），腾出的高度全给上半区；
+   * 选择记在 localStorage，刷新后保持 —— 但**绝不整页刷新**，只切一个属性。
+   */
+  const INSPECTOR_KEY = 'agent-client:inspector-collapsed';
+
+  function applyInspectorCollapsed(collapsed, options = {}) {
+    const grid = dom.grid;
+    if (grid === null || grid === undefined) return collapsed;
+    if (collapsed) grid.setAttribute('data-inspector', 'collapsed');
+    else grid.removeAttribute('data-inspector');
+
+    if (dom.inspectorToggle !== null && dom.inspectorToggle !== undefined) {
+      dom.inspectorToggle.setAttribute('aria-expanded', collapsed ? 'false' : 'true');
+      dom.inspectorToggle.setAttribute('title', collapsed ? '展开检查器' : '收起检查器');
+    }
+    if (dom.inspectorToggleLabel !== null && dom.inspectorToggleLabel !== undefined) {
+      dom.inspectorToggleLabel.textContent = collapsed ? '展开' : '收起';
+    }
+
+    if (options.remember !== false) {
+      try {
+        window.localStorage.setItem(INSPECTOR_KEY, collapsed ? '1' : '0');
+      } catch {
+        /* 隐私模式 / 存储被禁：记不住也不影响这一次的收起 */
+      }
+    }
+    return collapsed;
+  }
+
+  function readInspectorCollapsed() {
+    try {
+      return window.localStorage.getItem(INSPECTOR_KEY) === '1';
+    } catch {
+      return false;
+    }
+  }
+
+  if (dom.inspectorToggle !== null && dom.inspectorToggle !== undefined) {
+    dom.inspectorToggle.addEventListener('click', () => {
+      const collapsed = dom.grid?.getAttribute('data-inspector') === 'collapsed';
+      applyInspectorCollapsed(!collapsed);
+    });
+  }
+  applyInspectorCollapsed(readInspectorCollapsed(), { remember: false });
 
   // 浏览器面板的纯逻辑与 DOM 都在 browser.js 里；这里只接线（BROWSER-011）
   const browserPanel = createBrowserPanel({

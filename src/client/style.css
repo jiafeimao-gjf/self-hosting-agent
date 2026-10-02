@@ -232,6 +232,34 @@ body {
   grid-template-rows: minmax(0, 1.7fr) minmax(0, 1fr);
 }
 
+/* 检查器最小化：只留标题栏，省下来的高度全给上半区。
+   选择器带上 :has() 是为了**压过上面那条「切到浏览器就加高上半区」**——
+   两者特异性同为 0-3-0，靠"排在后面"取胜；不加 :has() 就只有 0-2-0，
+   收起时检查器那一行会白占掉一半高度（实测过）。 */
+.grid[data-inspector='collapsed']:has(.zone-inspector) {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.grid[data-inspector='collapsed'] #inspector-body {
+  display: none;
+}
+
+.inspector-toggle {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.inspector-chevron {
+  display: inline-block;
+  transition: transform 0.15s ease;
+}
+
+.grid[data-inspector='collapsed'] .inspector-chevron {
+  transform: rotate(-90deg);
+}
+
 .zone-inspector {
   grid-area: inspector;
 }

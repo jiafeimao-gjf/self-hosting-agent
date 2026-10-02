@@ -90,5 +90,6 @@ Agent 给的 HTML **只进沙箱**：`<iframe sandbox="allow-scripts" srcdoc="..
 - **UI-006** 界面面板用 `<iframe sandbox="allow-scripts" srcdoc>` 承载服务端 HTML；`document` 事件只更新 `srcdoc` 与版本号，宿主页面不刷新（无 `location.reload` / `document.write`）。
 - **UI-007** `app.js` 用 `EventSource('/api/stream')` 订阅并处理 `state` / `frame` / `document` / `done` 四类事件，通过 `POST` 调用 `/api/message`、`/api/interrupt`、`/api/rollback`；在 Node 中 import 无副作用，`normalizeState` 对缺字段的坏输入退化为空。
 - **UI-008** 对话流把人类消息靠右、`agent.thinking` 靠左，工具调用渲染成「谁 · 调了什么 · ok/失败」的摘要行，时间线按事件类型上色，且所有进入 DOM 的文本都经过 `escapeHtml`。
+- **UI-011** 检查器可最小化：标题栏上的按钮收起/展开（`aria-expanded` / `aria-controls` 同步），收起时只留标题栏、腾出的高度给上半区，不做整页刷新；选择记在 localStorage，刷新后保持。
 - **UI-010** 忙碌指示：Agent 干活期间对话区有可见反馈（脉动点 + 「已等 N 秒」），`done` 时立即收掉。真模型一轮可能几十秒，没有它人类会以为卡死。
 - **UI-009** 首帧不会被吞：iframe 尚未完成初始加载时收到的 html 先记为待画、`load` 之后补画；`document` 事件强制重画；判定「要不要画」看的是**画没画上**而不是「内容变没变」。（真实故障：首帧赋值被 iframe 尚未完成的初始加载覆盖，缓存又认定「这份 html 画过了」，于是面板永久空白。）

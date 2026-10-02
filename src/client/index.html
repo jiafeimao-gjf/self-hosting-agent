@@ -157,8 +157,23 @@
 
       <!-- 右栏下：检查器 -->
       <section class="zone zone-inspector" aria-label="检查器">
-        <div class="zone-head"><h2>检查器</h2><span class="hint">进程表 · 任务板 · 事件时间线 · 客户端源码</span></div>
-        <div class="inspector">
+        <div class="zone-head">
+          <h2>检查器</h2>
+          <span class="hint">进程表 · 任务板 · 事件时间线 · 客户端源码</span>
+          <!-- 最小化：收起来把空间让给界面面板，标题栏留着以便随时展开 -->
+          <button
+            id="inspector-toggle"
+            class="btn btn-ghost inspector-toggle"
+            type="button"
+            aria-expanded="true"
+            aria-controls="inspector-body"
+            title="收起检查器"
+          >
+            <span id="inspector-toggle-label">收起</span>
+            <span class="inspector-chevron" aria-hidden="true">▾</span>
+          </button>
+        </div>
+        <div id="inspector-body" class="inspector">
           <div class="card card-agents">
             <h3 class="card-title">Agent 进程表</h3>
             <div id="agents" class="agents"></div>
