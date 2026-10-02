@@ -225,6 +225,11 @@ body {
   grid-area: surface;
 }
 
+/* 切到内置浏览器时给它更多空间：一份完整 HTML 需要地方展开 */
+.grid:has(.zone-surface[data-active-panel='browser']) {
+  grid-template-rows: minmax(0, 1.7fr) minmax(0, 1fr);
+}
+
 .zone-inspector {
   grid-area: inspector;
 }
@@ -439,7 +444,56 @@ body {
   box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.15);
 }
 
-/* ---------- 界面面板（沙箱） ---------- */
+/* ---------- 沙箱面板（界面 / 浏览器，SPEC-019） ---------- */
+
+/* 面板头元素多了（两个 tab + 两个版本 chip），窄屏让它换行而不是挤爆 */
+.zone-surface .zone-head {
+  flex-wrap: wrap;
+  row-gap: 6px;
+}
+
+.panel-tabs {
+  display: inline-flex;
+  gap: 4px;
+  padding: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: rgba(5, 6, 10, 0.6);
+}
+
+.tab {
+  padding: 2px 12px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--text-muted);
+  font-family: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  transition: color 0.15s ease, border-color 0.15s ease;
+}
+
+.tab:hover {
+  color: var(--cyan);
+}
+
+.tab.is-active {
+  border-color: rgba(34, 211, 238, 0.5);
+  background: rgba(34, 211, 238, 0.12);
+  color: var(--cyan);
+}
+
+/* 两个面板并存在同一片区域里，靠 hidden 切换；display:flex 会盖掉 [hidden]，必须显式写 */
+.panel-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.panel-body[hidden] {
+  display: none;
+}
 
 .surface-frame {
   flex: 1;
@@ -453,6 +507,80 @@ body {
   border: 1px solid var(--border-strong);
   border-radius: var(--radius-sm);
   background: var(--bg);
+}
+
+/* ---------- 浏览器面板（SPEC-019）：与界面面板并存的第二个沙箱 ---------- */
+
+.browser-frame {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  padding: 10px;
+  gap: 8px;
+}
+
+.browser-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+}
+
+.browser-title {
+  flex: none;
+  max-width: 46%;
+  overflow: hidden;
+  color: var(--text);
+  font-size: 12.5px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-last-event {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-align: right;
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.browser-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.browser {
+  width: 100%;
+  height: 100%;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+}
+
+/* 空态覆盖在 iframe 上：没有文档时不留一块纯黑，也不报错 */
+.browser-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(5, 6, 10, 0.85);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.browser-empty[hidden] {
+  display: none;
 }
 
 /* ---------- 检查器 ---------- */

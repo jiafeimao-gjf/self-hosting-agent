@@ -23,6 +23,7 @@ import { SurfaceIngest } from '../surface/ingest.ts';
 import type { Frame } from '../protocol/frames.ts';
 import { HOST_TOOL_NAMES, createHostTools } from './host-tools.ts';
 import type { ClientChangedPayload, HostRuntime, HostTool } from './host-tools.ts';
+import { BrowserHost } from '../browser/document.ts';
 import { silentLogger } from '../log/logger.ts';
 import type { Logger } from '../log/logger.ts';
 import type { ClientSource } from './client-source.ts';
@@ -47,6 +48,10 @@ export interface TeamRunnerOptions {
   onClientChanged?: (payload: ClientChangedPayload) => void;
   /** 诊断日志：子进程 stderr、进程起停都记它 */
   logger?: Logger;
+  /** 浏览器文档更新时通知宿主（浏览器面板据此重画） */
+  onBrowserChanged?: (doc: { version: number; title: string; html: string; allowNetwork: boolean }) => void;
+  /** 可注入的浏览器宿主（测试与恢复现场用） */
+  browser?: BrowserHost;
 }
 
 export interface SpawnAgentOptions {
@@ -71,6 +76,8 @@ export class TeamRunner implements HostRuntime {
   readonly log: EventLog;
   readonly approval: ApprovalGate;
   readonly pool: AgentPool;
+  /** SPEC-019 内置浏览器的宿主侧文档 */
+  readonly browser: BrowserHost;
   readonly board: TaskBoard;
   readonly mailbox: Mailbox;
   readonly document: ViewDocument;
@@ -78,6 +85,9 @@ export class TeamRunner implements HostRuntime {
   readonly dir: string;
   readonly clientSource: ClientSource | undefined;
   readonly onClientChanged: ((payload: ClientChangedPayload) => void) | undefined;
+  readonly onBrowserChanged:
+    | ((doc: { version: number; title: string; html: string; allowNetwork: boolean }) => void)
+    | undefined;
 
   #tools: HostTool[];
   #scripts: Record<string, unknown[]>;
@@ -104,6 +114,8 @@ export class TeamRunner implements HostRuntime {
     this.#onFrameHook = options.onFrame;
     this.clientSource = options.clientSource;
     this.onClientChanged = options.onClientChanged;
+    this.browser = options.browser ?? new BrowserHost();
+    this.onBrowserChanged = options.onBrowserChanged;
   }
 
   get hostToolNames(): readonly string[] {

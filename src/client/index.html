@@ -40,21 +40,73 @@
         </form>
       </section>
 
-      <!-- 右栏上：界面面板（Agent 产出的界面在这里的沙箱里活着） -->
-      <section class="zone zone-surface" aria-label="界面面板">
+      <!--
+        右栏上：两个**并存**的沙箱面板（SPEC-019）。
+        界面面板（View Spec 渲染）与浏览器面板（Agent 直接给的任意 HTML）各用一个
+        iframe，靠标签切换显隐、互不覆盖；两者的沙箱都只开 allow-scripts，绝不追加
+        同源权限（两者同时开等于沙箱失效）。已有的 DOM id（surface / surface-version 等）保持不变。
+      -->
+      <section class="zone zone-surface" aria-label="沙箱面板">
         <div class="zone-head">
           <h2>界面面板</h2>
+          <div class="panel-tabs" role="tablist" aria-label="沙箱面板切换">
+            <button
+              id="panel-tab-surface"
+              class="tab is-active"
+              type="button"
+              role="tab"
+              aria-selected="true"
+              aria-controls="panel-surface"
+              data-panel-tab="surface"
+            >界面</button>
+            <button
+              id="panel-tab-browser"
+              class="tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-browser"
+              data-panel-tab="browser"
+            >浏览器</button>
+          </div>
           <span class="hint">sandbox iframe · srcdoc 实时更新，不刷新页面</span>
           <span class="version-chip">沙箱 <b id="surface-version">v0</b></span>
+          <span class="version-chip">浏览器 <b id="browser-version">v0</b></span>
         </div>
-        <div class="surface-frame">
-          <iframe
-            id="surface"
-            class="surface"
-            title="Agent 界面沙箱"
-            sandbox="allow-scripts"
-            srcdoc=""
-          ></iframe>
+
+        <!-- 界面面板（View Spec）：保持原有结构与 id 不变 -->
+        <div id="panel-surface" class="panel-body" data-panel="surface">
+          <div class="surface-frame">
+            <iframe
+              id="surface"
+              class="surface"
+              title="Agent 界面沙箱"
+              sandbox="allow-scripts"
+              srcdoc=""
+            ></iframe>
+          </div>
+        </div>
+
+        <!-- 浏览器面板（SPEC-019）：宿主组合好的完整文档进 srcdoc，桥脚本已在其中 -->
+        <div id="panel-browser" class="panel-body" data-panel="browser" hidden>
+          <div class="browser-frame">
+            <div class="browser-bar">
+              <span id="browser-title" class="browser-title">暂无浏览器文档</span>
+              <span id="browser-last-event" class="browser-last-event" aria-live="polite"></span>
+            </div>
+            <div class="browser-stage">
+              <iframe
+                id="browser"
+                class="browser"
+                title="Agent 浏览器沙箱"
+                sandbox="allow-scripts"
+                srcdoc=""
+              ></iframe>
+              <div id="browser-empty" class="browser-empty">
+                暂无浏览器文档 · Agent 调用 browser.render 后会出现在这里
+              </div>
+            </div>
+          </div>
         </div>
       </section>
 

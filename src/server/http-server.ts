@@ -195,6 +195,15 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       return;
     }
 
+    if (route === '/api/browser/event' && method === 'POST') {
+      // SPEC-019：人类在内置浏览器里的交互回流。校验失败一律 400，且不落日志。
+      readBody(req).then((body) => {
+        const outcome = session.browserEvent(body);
+        sendJson(res, outcome.ok ? 200 : 400, outcome.ok ? { ok: true } : { ok: false, error: outcome.error });
+      }).catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
+      return;
+    }
+
     if (route === '/api/client/revert' && method === 'POST') {
       readBody(req).then((body) => {
         const target = typeof body.path === 'string' ? body.path : '';

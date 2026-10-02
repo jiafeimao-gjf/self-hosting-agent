@@ -251,7 +251,16 @@ test('index.html + style.css 是离线深色单页，四区与必需元素齐全
 test('界面面板是 sandbox iframe srcdoc，document 事件只更新 srcdoc 而不刷新页面', () => {
   assert.ok(/<iframe[^>]*id="surface"[^>]*sandbox="allow-scripts"/.test(indexHtml), '沙箱必须允许脚本');
   assert.ok(/<iframe[^>]*id="surface"[^>]*srcdoc=""/.test(indexHtml));
-  assert.equal(/allow-same-origin/.test(indexHtml), false, '不得给出同源权限');
+
+  // 逐条检查**真实的 sandbox 属性**，而不是 grep 全文：
+  // 注释里写明「绝不开 allow-same-origin」也应当被允许（那是安全约束的说明，不是配置）。
+  const sandboxAttrs = indexHtml.match(/sandbox="[^"]*"/g) ?? [];
+  assert.equal(sandboxAttrs.length >= 2, true, '界面面板与内置浏览器各有一个沙箱');
+  for (const attr of sandboxAttrs) {
+    const flags = attr.slice('sandbox="'.length, -1).split(/\s+/).filter((x) => x !== '');
+    assert.deepEqual(flags, ['allow-scripts'], `沙箱只允许 allow-scripts，实际是 ${attr}`);
+    assert.equal(/allow-same-origin/.test(attr), false, 'allow-scripts + allow-same-origin 等于沙箱失效');
+  }
 
   assert.ok(appJs.includes("new EventSource('/api/stream')"));
   assert.ok(appJs.includes("addEventListener('document'"));

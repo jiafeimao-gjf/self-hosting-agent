@@ -8,17 +8,40 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **201** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **201 / 201** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **201** 个，全绿（约 8s，零第三方依赖） |
+| 验收标准 | **213** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **213 / 213** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **220** 个，全绿（约 8s，零第三方依赖） |
 | 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
 | P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
 | P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
 | P2 已落地 | **可用客户端**：HTTP + SSE 服务、浏览器 Surface（对话 / 沙箱界面面板 / 检查器）、事件日志投影的多轮记忆、本机 Ollama 直连 |
 | P3 已落地 | **客户端自举**：Agent 可改 `src/client/**` 自身源码，写入前跑项目自检、不过自动回滚，带版本历史 / 可读 diff / 一键回滚 / 审计，CSS 变更无刷新热替换 |
+| P6 已落地 | **内置浏览器模块**：Agent 直接渲染任意 HTML 到**独立的第二个沙箱**（与界面面板并存），文档里的脚本真的跑；点击/提交/`AgentClient.emit` 经 postMessage 桥回流，作为人类动作送进 Agent 的上下文 |
 | P5 已落地 | **诊断日志 + 真模型跑通**：logger（级别/JSONL/子进程 stderr 收口/崩溃兜底/访问日志/事件日志轮转）；工具名线上合法化与参数 schema 透传——这两条修完，真 DeepSeek 端点才真正画出界面 |
 | P4 已落地 | **设置页 + 可自配模型**：浏览器里切换 OpenAI 兼容 / Anthropic 两种协议，填 Base URL / 模型 / Key / 温度 / 超时，四个预设、连接测试、保存即生效（Lead 重启且历史不丢）；Key 打码、永不回显 |
 | 尚未落地 | Electron/Tauri 外壳、人类审批 UI（当前人类在场即自动放行但全程留痕）、更细粒度的热更新（HMR） |
+
+## 内置浏览器：Agent 直接给一份 HTML
+
+界面面板只能画「我们支持的组件」。图表、表单、可点击的小工具这类东西，得让 Agent 直接交一份 HTML。
+
+顶栏右侧的「浏览器」页签就是它的独立沙箱（与界面面板并存，互不覆盖）。Agent 调 `browser.render` 把文档推过去，
+文档里的脚本**真的执行**；人类在里面的操作会经桥回流，作为一条人类动作送进 Agent 的上下文：
+
+```html
+<button data-ac-emit="导出">导出</button>          <!-- 声明式：点了就上报 -->
+<script>AgentClient.emit('计算营收', {输入: 21})</script>  <!-- 命令式：能带数据 -->
+```
+
+| 规矩 | 做法 |
+| --- | --- |
+| 沙箱 | 只开 `allow-scripts`。**绝不同时开 `allow-same-origin`**（两者同开会话等于沙箱失效） |
+| 断网 | 默认注入 `default-src 'none'` 的 CSP；要加载外链得显式 `allowNetwork: true` |
+| 入口 | 窗口消息校验信封（`__ac`/channel）+ 本体；HTTP 入口只校验本体——客户端按契约会剥掉信封 |
+| 上限 | HTML 256KB、单条事件 8KB，超限直接拒绝（截断出来的 HTML 更危险） |
+
+实测（真 DeepSeek 端点）：页面加载即 `emit` 回流 → Agent 收到；用**真实鼠标坐标**点沙箱里的按钮 →
+前端计数器 0→1（文档自己的 JS 在跑），同时「点我」回流成第二条人类动作，Agent 据此回应。
 
 ## 排障：日志在哪、看什么
 

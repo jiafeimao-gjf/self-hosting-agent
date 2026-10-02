@@ -11,6 +11,7 @@ import type { Mailbox } from '../mailbox/mailbox.ts';
 import type { TaskBoard } from '../taskboard/board.ts';
 import type { ViewDocument } from '../surface/document.ts';
 import type { SurfaceIngest } from '../surface/ingest.ts';
+import type { BrowserHost } from '../browser/document.ts';
 import type { ClientSource } from './client-source.ts';
 
 /** 宿主工具清单：宿主与子进程两边都按这份名字对齐 */
@@ -19,6 +20,7 @@ export const HOST_TOOL_NAMES = [
   'agent.send',
   'agent.wait',
   'ui.render',
+  'browser.render',
   'task.create',
   'task.claim',
   'task.complete',
@@ -46,6 +48,8 @@ export interface HostRuntime {
   board: TaskBoard;
   mailbox: Mailbox;
   ingest: SurfaceIngest;
+  /** SPEC-019 内置浏览器：Agent 直接给一份 HTML 时用它 */
+  browser: BrowserHost;
   document: ViewDocument;
   spawnAgent(
     agentId: string,
@@ -56,6 +60,8 @@ export interface HostRuntime {
   /** P3：客户端源码管理器；没接上时 client.* 工具明确报错，而不是假装成功 */
   clientSource?: ClientSource;
   onClientChanged?: (payload: ClientChangedPayload) => void;
+  /** 浏览器文档更新：宿主据此推给客户端（SPEC-019） */
+  onBrowserChanged?: (doc: { version: number; title: string; html: string; allowNetwork: boolean }) => void;
 }
 
 export interface HostToolResult {
@@ -173,6 +179,32 @@ export function createHostTools(): HostTool[] {
         const result = runtime.ingest.ingest({ scope, op, spec: args.spec });
         if (!result.ok) return fail(`${result.code}: ${result.reason}`);
         return done({ version: result.version, scope: result.scope });
+      },
+    },
+    {
+      name: 'browser.render',
+      description: '把一个完整的 HTML 文档渲染进内置浏览器面板（独立于界面文档），返回版本号',
+      async run(args, runtime) {
+        const html = asString(args.html);
+        if (html === '') return fail('INVALID_ARGS: browser.render 需要 html');
+
+        const result = runtime.browser.render({
+          html,
+          ...(typeof args.title === 'string' ? { title: args.title } : {}),
+          ...(args.allowNetwork === true ? { allowNetwork: true } : {}),
+        });
+        if (!result.ok) return fail(`${result.code}: ${result.reason}`);
+
+        const doc = runtime.browser.current();
+        if (doc !== undefined) {
+          runtime.onBrowserChanged?.({
+            version: doc.version,
+            title: doc.title,
+            html: doc.html,
+            allowNetwork: doc.allowNetwork,
+          });
+        }
+        return done({ version: result.version, title: result.title });
       },
     },
     {

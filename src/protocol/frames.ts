@@ -46,6 +46,12 @@ export const FRAME_SPECS = {
    * 宿主工具桥：Loop 调不动「拉起一个进程」这种事，只能请 Kernel 代办。
    * Loop 发 tool.call（out），宿主执行后用它把结果回填（in）。
    */
+  'browser.event': {
+    direction: 'in',
+    required: { name: 'string' },
+    // 文档自己决定 payload 内容；形状固定为对象，非对象由桥包成 {value:…}
+    optional: { payload: 'object', source: 'string' },
+  },
   'tool.reply': {
     direction: 'in',
     required: { id: 'string', ok: 'boolean' },

@@ -17,7 +17,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const quiet = process.argv.includes('--quiet');
 
 // 前缀允许带数字（例如 E2E-001）且允许两字母前缀（例如 UI-001），否则规格 ID 会被静默漏掉——门禁自己也会骗人
-const ID_PATTERN = '[A-Z][A-Z0-9]{1,5}-\\d{3}';
+const ID_PATTERN = '[A-Z][A-Z0-9]{1,7}-\\d{3}';
 
 function walk(dir, filter) {
   if (!fs.existsSync(dir)) return [];
@@ -42,7 +42,7 @@ function collectCriteria() {
     const rel = path.relative(root, file);
     const lines = fs.readFileSync(file, 'utf8').split('\n');
     lines.forEach((line, index) => {
-      const match = /^\s*-\s+\*\*([A-Z][A-Z0-9]{1,5}-\d{3})\*\*\s*(.*)$/.exec(line);
+      const match = new RegExp('^\\s*-\\s+\\*\\*(' + ID_PATTERN + ')\\*\\*\\s*(.*)$').exec(line);
       if (!match) return;
       const [, id, summary] = match;
       if (criteria.has(id)) {
@@ -50,6 +50,17 @@ function collectCriteria() {
       }
       criteria.set(id, { id, summary: summary.trim(), spec: rel, line: index + 1 });
     });
+  }
+  // 自检：某个规格文件一条标准都没识别出来，多半是 ID 命名超出正则（历史上就发生过：
+  // BROWSER- 有 7 个字符前缀，而正则只认到 6，于是整条规格对门禁隐形、还报「全部覆盖」）。
+  for (const file of specFiles) {
+    const rel = path.relative(root, file);
+    const count = [...criteria.values()].filter((item) => item.spec === rel).length;
+    if (count === 0) {
+      throw new Error(
+        `规格文件一条验收标准都没识别出来：${rel}（检查 ID 命名是否超出 ID_PATTERN=${ID_PATTERN}）`,
+      );
+    }
   }
   return criteria;
 }

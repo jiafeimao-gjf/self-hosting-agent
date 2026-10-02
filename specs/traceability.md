@@ -23,6 +23,18 @@
 | **ARCH-003** | specs/000-architecture.md | 架构中的「一个 Agent 一个子进程」必须可被观测：Kernel 拉起的 Agent 有独立 pid，且 pid 与宿主不同。 | `test/kernel.test.ts` · spawn 拉起独立子进程：pid 与宿主不同，能读到子进程发出的帧 |
 | **ARCH-004** | specs/000-architecture.md | 跨层数据只能是 `src/protocol` 定义的帧类型：所有 `ui.patch` / `human.message` 等字面量必须来自帧规格表。 | `test/architecture.test.ts` · 跨层数据只能是协议帧：src 里出现的帧字面量必须都在帧表里 |
 | **ARCH-005** | specs/000-architecture.md | 每条规格的验收标准都必须被至少一个测试引用（由 `scripts/trace.mjs` 强制）。 | `test/architecture.test.ts` · 规格追溯门禁必须通过：每条验收标准都有测试守着 |
+| **BROWSER-001** | specs/019-browser.md | `BrowserHost.render({html})` 独立渲染任意 HTML：返回递增版本号与标题，**不影响** View Spec 界面文档。 | `test/browser.test.ts` · render 独立渲染任意 HTML：版本号自成一路，不影响 View Spec 界面文档 |
+| **BROWSER-002** | specs/019-browser.md | 空 HTML、非字符串、超过字节上限（256KB）一律拒绝，错误码明确。 | `test/browser.test.ts` · 空 HTML / 非字符串 / 超过字节上限一律拒绝，错误码明确 |
+| **BROWSER-003** | specs/019-browser.md | 组合文档：HTML 碎片被包成完整文档；已是完整文档则就地注入；桥脚本必须出现在组合结果里。 | `test/browser.test.ts` · 组合文档：碎片补成完整文档、完整文档就地注入，两种情况都带桥 |
+| **BROWSER-004** | specs/019-browser.md | 默认断网：组合结果含 `default-src 'none'` 的 CSP；`allowNetwork: true` 时不注入该 CSP。 | `test/browser.test.ts` · 默认断网（CSP），显式 allowNetwork 才放开 |
+| **BROWSER-005** | specs/019-browser.md | 桥入口校验：非对象 / `__ac` 缺失 / kind 不在白名单 / emit 缺 name / 超限，逐条拒绝并给出错误码。 | `test/browser.test.ts` · 事件入口硬校验：kind 白名单 / name / 超限，逐条拒绝<br>`test/browser.test.ts` · 窗口消息形态多一层信封校验：缺 __ac / channel 不对一律拒绝 |
+| **BROWSER-006** | specs/019-browser.md | 声明式交互：桥脚本监听 click 与 submit，读取 `data-ac-emit` 与 `data-ac-payload` 后上报。 | `test/browser.test.ts` · 声明式交互：桥监听 click 与 submit，读取 data-ac-emit / data-ac-payload<br>`test/client-browser-ui.test.ts` · 声明式交互：桥上报的 emit（data-ac-emit / data-ac-payload）原样转成 POST /api/browser/event |
+| **BROWSER-007** | specs/019-browser.md | 命令式交互与日志：桥暴露 `AgentClient.emit/log`，并转发 `console.log`、`window.onerror`、`unhandledrejection`。 | `test/browser.test.ts` · 命令式交互与日志：AgentClient.emit/log 与 console/error 转发<br>`test/client-browser-ui.test.ts` · 命令式与日志转发：emit / log / error 三类消息都转成 POST，进 DOM 的文本全部转义<br>`test/client-browser-ui.test.ts` · 面板控制器接上假 DOM：只有本 iframe 的消息才变成 POST，来源不对完全静默 |
+| **BROWSER-008** | specs/019-browser.md | 宿主工具 `browser.render`：成功返回版本号；参数非法返回 `INVALID_ARGS`。 | `test/browser.test.ts` · 宿主工具 browser.render：成功返回版本号，参数非法返回 INVALID_ARGS |
+| **BROWSER-009** | specs/019-browser.md | 人类交互送达 Agent：`POST /api/browser/event` 校验后写进事件日志（`browser.event`），并以 `browser.event` 帧投递给 Lead；非法事件返回 400 且不落日志。 | `test/browser.test.ts` · 人类交互回流：合法事件落日志并投给 Lead，非法事件 400 且不落日志 |
+| **BROWSER-010** | specs/019-browser.md | 子进程收到 `browser.event` 帧后，把它作为一条**人类来源的消息**注入本轮上下文（Agent 能据此行动）。 | `test/browser.test.ts` · 子进程收到 browser.event 帧后，把它作为人类来源的消息注入本轮上下文 |
+| **BROWSER-011** | specs/019-browser.md | 客户端浏览器面板独立于界面面板：沙箱属性只含 `allow-scripts`；消息必须来自该 iframe 的 window；面板显示文档标题与版本。 | `test/client-browser-ui.test.ts` · 浏览器面板是独立的第二个沙箱：只开 allow-scripts，与界面面板并存，已有 id 不变<br>`test/client-browser-ui.test.ts` · 桥消息只认本 iframe 的 window + __ac 标记 + 通道 + kind 白名单，其余一律丢弃<br>`test/client-browser-ui.test.ts` · 面板显示文档标题与版本；没有文档时是空态，坏输入不报错<br>`test/client-browser-ui.test.ts` · 首帧与空态：没画上就要再画，没有文档就清空沙箱而不是沿用旧内容<br>`test/client-browser-ui.test.ts` · 面板控制器接上假 DOM：只有本 iframe 的消息才变成 POST，来源不对完全静默 |
+| **BROWSER-012** | specs/019-browser.md | 端到端：脚本模型渲染 HTML → 人类点击 → 事件回传 → Agent 收到并回应下一轮。 | `test/browser.test.ts` · 端到端：脚本模型渲染 HTML → 人类点击 → Agent 收到并回下一轮 |
 | **CLI-001** | specs/011-client.md | `GET /api/state` 返回界面文档、进程表、任务板、消息与事件尾部，字段齐全且可 JSON 解析。 | `test/server.test.ts` · GET /api/state 返回界面文档、进程表、任务板、消息与事件尾部 |
 | **CLI-002** | specs/011-client.md | `GET /api/stream` 建立 SSE 连接后，先收到一次 `state` 快照。 | `test/server.test.ts` · SSE 建立连接后先收到一次 state 快照 |
 | **CLI-003** | specs/011-client.md | `POST /api/message` 把人类输入交给 Lead，Agent 的帧通过 SSE 以 `frame` 事件实时推给客户端。 | `test/server.test.ts` · POST /api/message 把人类输入交给 Lead，帧通过 SSE 实时推流 |
@@ -208,7 +220,7 @@
 
 ## 统计
 
-- 验收标准：**201** 条
-- 已覆盖：**201** 条
+- 验收标准：**213** 条
+- 已覆盖：**213** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

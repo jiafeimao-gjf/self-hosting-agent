@@ -170,6 +170,39 @@
       }
     },
     {
+      "title": "browser.event",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "name"
+      ],
+      "properties": {
+        "t": {
+          "const": "browser.event"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "payload": {
+          "type": "object"
+        },
+        "source": {
+          "type": "string"
+        }
+      }
+    },
+    {
       "title": "tool.reply",
       "type": "object",
       "additionalProperties": false,

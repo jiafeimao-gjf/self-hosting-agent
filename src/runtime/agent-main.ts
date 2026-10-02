@@ -168,6 +168,11 @@ const HOST_TOOL_DESCRIPTIONS: Record<string, string> = {
     'text{text} | progress{label, value:0~1, tone?} | action{label, emit} | list{items:["..."]} | ' +
     'kv{pairs:[{key, value}]} | columns{children:[...]} | badge{text, tone?} | panel{title?, children}。' +
     'tone 可选：default|muted|strong|info|success|warning|danger。一屏放一件事，不要把长文塞进界面。',
+  'browser.render':
+    '把一份完整的 HTML 文档渲染进**内置浏览器面板**（独立于界面面板，会立刻显示）。' +
+    '参数：html（必填，完整文档或片段都行）、title?、allowNetwork?（默认 false，禁止外链网络）。' +
+    '文档里的交互可以回流：给元素加 data-ac-emit="事件名"，人类点击后你会收到一条「浏览器交互」消息；' +
+    '文档内也能调 window.AgentClient.emit(name, payload) 主动上报。适合图表、表单、小工具这类界面文档表达不了的东西。',
   'client.list': '列出客户端自身可改的源码文件（你会看到路径、字节数、已有版本数）',
   'client.read': '读客户端自身的一个源码文件。参数：path（如 style.css / app.js）',
   'client.write':
@@ -187,6 +192,8 @@ const SYSTEM_PROMPT = [
   '工作方式：',
   '1. 先弄清人类要什么。不确定就直接问，不要编造数据。',
   '2. 需要在界面上展示结果时，调用 ui.render 把界面画出来——人类会立刻看到，不需要刷新。',
+  '2b. 需要图表、表单、可点击的小工具这类「一份完整 HTML 才表达得清」的东西，用 browser.render 画进内置浏览器面板；' +
+    '人类在里面点了带 data-ac-emit 的元素，你会收到一条「浏览器交互」消息。',
   '3. 回复用中文、短句、说结论。长内容放进界面里，而不是堆在对话里。',
   '4. 只有确实需要并行干活时，才用 agent.spawn 拉起队友（这会请求人类审批）。',
   '5. 做完一件事，用一句话告诉人类你做了什么、下一步建议什么。',
@@ -217,6 +224,15 @@ const HOST_TOOL_SCHEMAS: Record<string, Record<string, unknown>> = {
     type: 'object',
     properties: { ids: { type: 'array', items: { type: 'string' } }, timeoutMs: { type: 'number' } },
     required: ['ids'],
+  },
+  'browser.render': {
+    type: 'object',
+    properties: {
+      html: { type: 'string', description: 'HTML 文档（完整或片段）' },
+      title: { type: 'string', description: '面板上显示的标题' },
+      allowNetwork: { type: 'boolean', description: '是否允许加载外部资源，默认 false' },
+    },
+    required: ['html'],
   },
   'client.list': { type: 'object', properties: {} },
   'client.read': {
@@ -417,6 +433,27 @@ channel.on('frame', (frame: Frame) => {
         body: String(frame.body),
         ...(frame.kind === undefined ? {} : { kind: String(frame.kind) }),
       });
+      void runOnce();
+      break;
+    }
+    case 'browser.event': {
+      // SPEC-019：人类在内置浏览器里点了什么。它不是普通消息，而是**人类动作**——
+      // 所以要注入成一条人类来源的消息，Agent 才会据此行动，而不是当背景噪音。
+      messageCounter += 1;
+      const detail = (() => {
+        try {
+          return JSON.stringify(frame.payload ?? {});
+        } catch {
+          return '{}';
+        }
+      })();
+      pending.push({
+        id: `msg_${messageCounter}`,
+        from: 'human',
+        kind: 'browser',
+        body: `[浏览器交互] 人类在页面里触发了「${String(frame.name)}」，参数：${detail}`,
+      });
+      log.append({ type: 'browser.event.received', agent: agentId, name: frame.name });
       void runOnce();
       break;
     }

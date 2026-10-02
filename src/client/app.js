@@ -1,20 +1,25 @@
 /**
  * SPEC-012 §2–§3 客户端界面逻辑；SPEC-014 补上「客户端自举」的呈现
  * （订阅 `client.changed`：`.css` 无刷新热替换，`.js`/`.html` 只给人类点击的刷新横幅）；
- * SPEC-017 补上浏览器端设置页的接线（打开 / 关闭、保存、测试连接、当前模型 chip）。
+ * SPEC-017 补上浏览器端设置页的接线（打开 / 关闭、保存、测试连接、当前模型 chip）；
+ * SPEC-019 补上内置浏览器面板的接线（`browser` 事件 / `/api/state.browser` 字段 /
+ * iframe 的 postMessage → `POST /api/browser/event`）。
  *
  * 分工：
  *
  * - 本文件上半部分是**纯函数**（消息 / 工具摘要 / 时间线 / 快照归一化 → HTML 字符串），
  *   不碰 DOM，`node --test` 里可以直接 import 断言（UI-008）；
- * - 下半部分 `boot()` 只做连线：EventSource 订阅 `/api/stream`、五个 SSE 事件、
- *   三个 POST 端点、把渲染结果塞进 DOM（UI-006 / UI-007）；设置页的纯逻辑与 DOM
- *   渲染在 `settings.js`，这里只实例化并接线（UI3-001）。
+ * - 下半部分 `boot()` 只做连线：EventSource 订阅 `/api/stream`、六个 SSE 事件、
+ *   四个 POST 端点、把渲染结果塞进 DOM（UI-006 / UI-007）；设置页的纯逻辑与 DOM
+ *   渲染在 `settings.js`，浏览器面板的纯逻辑与 DOM 渲染在 `browser.js`，
+ *   这里只实例化并接线（UI3-001 / BROWSER-011）。
  *
  * 沙箱是架构的一环：Agent 给的 HTML 只进 `<iframe sandbox="allow-scripts" srcdoc>`，
- * 收到 `document` 事件时**只更新 srcdoc**，宿主页面绝不刷新。
+ * 收到 `document` / `browser` 事件时**只更新 srcdoc**，宿主页面绝不刷新。
+ * 两个沙箱（`#surface` 与 `#browser`）并存，互不覆盖。
  */
 
+import { createBrowserPanel } from './browser.js';
 import { escapeHtml, renderViewSpec } from './renderer.js';
 import { createSettingsPage, currentModelText } from './settings.js';
 
@@ -48,7 +53,8 @@ export function toneOfEvent(type) {
   const name = typeof type === 'string' ? type : '';
   if (name.includes('error') || name.includes('exit') || name.includes('fail')) return 'danger';
   if (name.startsWith('client.')) return 'info'; // SPEC-014：客户端源码变更
-  if (name.startsWith('ui.') || name.startsWith('surface')) return 'info';
+  // SPEC-019：浏览器面板的事件（browser.event.*）与界面/自举变更同色
+  if (name.startsWith('ui.') || name.startsWith('surface') || name.startsWith('browser')) return 'info';
   if (name.startsWith('tool.') || name.startsWith('host.tool')) return 'warning';
   if (name.startsWith('message.') || name.startsWith('human.')) return 'strong';
   if (name.startsWith('task.') || name.startsWith('mailbox')) return 'success';
@@ -432,6 +438,14 @@ function boot() {
     change: document.getElementById('client-change'),
     busy: document.getElementById('busy'),
     busyText: document.getElementById('busy-text'),
+    // SPEC-019：第二个沙箱（浏览器面板）。两个面板并存在 #panel-* 里，靠 tab 切换显隐。
+    browser: document.getElementById('browser'),
+    browserTitle: document.getElementById('browser-title'),
+    browserVersion: document.getElementById('browser-version'),
+    browserEmpty: document.getElementById('browser-empty'),
+    browserLastEvent: document.getElementById('browser-last-event'),
+    panelTabs: Array.from(document.querySelectorAll('[data-panel-tab]')),
+    panelBodies: Array.from(document.querySelectorAll('[data-panel]')),
   };
 
   const state = {
@@ -559,6 +573,10 @@ function boot() {
     const snapshot = normalizeState(raw);
     state.version = snapshot.version;
     setSurface(snapshot.html, snapshot.version);
+
+    // SPEC-019：/api/state 的 browser 字段。没有这个字段就保持现状——
+    // 老服务端 / 别的快照不该把 SSE 刚送来的浏览器文档清空。
+    browserPanel.applyState(raw);
 
     dom.agents.innerHTML = snapshot.agents.map(renderAgentRow).join('') || '<div class="empty">暂无 Agent</div>';
     dom.tasks.innerHTML = snapshot.tasks.map(renderTaskRow).join('') || '<div class="empty">暂无任务</div>';
@@ -755,6 +773,49 @@ function boot() {
     settingsNodes.open.addEventListener('click', () => settingsPage.open());
   }
 
+  /**
+   * SPEC-019：两个沙箱面板靠 tab 切换显隐，DOM 里始终并存 ——
+   * 切走不会卸载 iframe，也不会丢掉另一份文档（BROWSER-011 的「互不覆盖」）。
+   */
+  function showPanel(name) {
+    const target = name === 'browser' ? 'browser' : 'surface';
+    for (const tab of dom.panelTabs) {
+      const active = tab.getAttribute('data-panel-tab') === target;
+      tab.classList.toggle('is-active', active);
+      tab.setAttribute('aria-selected', active ? 'true' : 'false');
+    }
+    for (const body of dom.panelBodies) {
+      body.hidden = body.getAttribute('data-panel') !== target;
+    }
+    // 浏览器页签时让上半区长大一些：一份 HTML 挤在 150px 里是没法用的
+    const zone = dom.panelBodies[0]?.closest('.zone');
+    if (zone !== null && zone !== undefined) zone.setAttribute('data-active-panel', target);
+  }
+
+  for (const tab of dom.panelTabs) {
+    tab.addEventListener('click', () => showPanel(tab.getAttribute('data-panel-tab')));
+  }
+
+  // 浏览器面板的纯逻辑与 DOM 都在 browser.js 里；这里只接线（BROWSER-011）
+  const browserPanel = createBrowserPanel({
+    nodes: {
+      iframe: dom.browser,
+      title: dom.browserTitle,
+      version: dom.browserVersion,
+      empty: dom.browserEmpty,
+      lastEvent: dom.browserLastEvent,
+    },
+    request: requestJson,
+    onForwarded(body) {
+      // 人类在文档里点了一下：进时间线，随后服务端会把它作为人类来源的消息送达 Agent
+      pushTimeline({ type: `browser.event.${body.kind}`, agent: 'browser', ts: new Date().toISOString() });
+    },
+    onError(text) {
+      appendMessage(renderMessage({ kind: 'error', agent: '宿主', text }));
+      pushTimeline({ type: 'browser.event.rejected', agent: 'browser', ts: new Date().toISOString() });
+    },
+  });
+
   // 顶栏模型 chip 先按服务端的已存设置显示（拿不到就退化为 SPEC-015 的默认值）
   void settingsPage.load();
 
@@ -818,8 +879,19 @@ function boot() {
   source.addEventListener('done', (event) => applyDone(parseData(event.data)));
   // SPEC-014：客户端源码变更（事件名含点号，必须用完整名字订阅）
   source.addEventListener('client.changed', (event) => applyClientChange(parseData(event.data)));
+  // SPEC-019：内置浏览器文档（html 已由宿主组合好，直接进 srcdoc 的沙箱）。
+  // Agent 明确渲染了新文档：强制重画，不去猜缓存。
+  source.addEventListener('browser', (event) => browserPanel.applyDocument(parseData(event.data), { force: true }));
   // SPEC-015 SET-008 / SPEC-017：设置变更广播 settings 事件，顶栏的当前模型 chip 同步更新
   source.addEventListener('settings', (event) => settingsPage.applyEffectiveModel(parseData(event.data)));
+
+  /**
+   * SPEC-019：桥的回传入口。**只认浏览器面板 iframe 的 window**（来源校验在
+   * browser.js 的 acceptBrowserEvent 里，非本 iframe / 无桥标记的消息一律丢弃）。
+   */
+  window.addEventListener('message', (event) => {
+    browserPanel.handleMessage(event);
+  });
 }
 
 /** SSE 的 data 是字符串；坏了也不能让界面停摆 */

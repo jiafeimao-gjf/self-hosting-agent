@@ -23,7 +23,15 @@ import type { ContextItem } from '../loop/loop.ts';
 import type { Frame } from '../protocol/frames.ts';
 import type { LoggedEvent } from '../eventlog/log.ts';
 
-export type SessionEventType = 'state' | 'frame' | 'document' | 'done' | 'client.changed' | 'settings';
+export type SessionEventType =
+  | 'state'
+  | 'frame'
+  | 'document'
+  | 'done'
+  | 'client.changed'
+  | 'settings'
+  // SPEC-019：内置浏览器的文档更新
+  | 'browser';
 
 export interface SessionEvent {
   type: SessionEventType;
@@ -43,6 +51,8 @@ export interface ClientState {
   sources: Array<{ path: string; bytes: number; versions: number }>;
   /** SPEC-015：当前生效的模型配置（Key 已打码） */
   model: PublicSettings;
+  /** SPEC-019：内置浏览器的当前文档（已组合、可直接进 srcdoc）；没有则为 null */
+  browser: { version: number; title: string; html: string; allowNetwork: boolean } | null;
 }
 
 export interface SessionOptions {
@@ -139,6 +149,11 @@ export class ClientSession {
       logger: this.logger,
       onFrame: (agentId, frame) => this.#onFrame(agentId, frame),
       ...(clientSource === undefined ? {} : { clientSource }),
+      onBrowserChanged: (doc) => {
+        this.logger.info('浏览器文档已更新', { version: doc.version, title: doc.title });
+        this.#emit({ type: 'browser', data: doc });
+        this.#emit({ type: 'state', data: this.state() });
+      },
       onClientChanged: (payload) => {
         this.#emit({ type: 'client.changed', data: payload });
         this.#emit({ type: 'state', data: this.state() });
@@ -321,6 +336,7 @@ export class ClientSession {
     }));
 
     const messages = this.#conversationMessages();
+    const browserDoc = this.runner.browser.current();
 
     const listedSources = this.runner.clientSource?.list();
     const sources = listedSources?.ok === true ? listedSources.value : [];
@@ -335,6 +351,15 @@ export class ClientSession {
       messages,
       sources,
       model: this.publicSettings(),
+      browser:
+        browserDoc === undefined
+          ? null
+          : {
+              version: browserDoc.version,
+              title: browserDoc.title,
+              html: browserDoc.html,
+              allowNetwork: browserDoc.allowNetwork,
+            },
     };
   }
 
@@ -377,6 +402,67 @@ export class ClientSession {
       }));
 
     return [...host, ...spoken].sort((a, b) => a.ts.localeCompare(b.ts)).slice(-limit);
+  }
+
+  /**
+   * SPEC-019：受理人类在内置浏览器里的交互。
+   *
+   * 全链路都当**不可信输入**：形状不对、超限、kind 不在白名单，一律拒绝且不落日志。
+   * 通过之后才写事件日志，并以 `browser.event` 帧投给 Lead —— 这样 Agent 才「知道」人类点了什么。
+   */
+  browserEvent(raw: unknown): { ok: boolean; error?: string } {
+    // HTTP 入口：客户端按契约只发 {kind,name,payload}，信封校验在窗口边界（acceptBridge）
+    const accepted = this.runner.browser.acceptEvent(raw);
+    if (!accepted.ok) {
+      this.logger.warn('浏览器事件被拒绝', { code: accepted.code, reason: accepted.reason });
+      return { ok: false, error: `${accepted.code}: ${accepted.reason}` };
+    }
+
+    const event = accepted.event;
+    this.runner.log.append({
+      type: 'browser.event',
+      kind: event.kind,
+      name: event.name ?? '',
+      payload: event.payload ?? null,
+      ts: event.ts,
+    });
+
+    // ready / log / error 只是留痕；只有人类真的「操作」了才值得惊动 Agent
+    if (event.kind !== 'emit') {
+      this.#emit({ type: 'state', data: this.state() });
+      return { ok: true };
+    }
+
+    // 落进邮箱与邮件日志：这样它才会出现在对话投影里（人类看得到自己点了什么），
+    // 也和 human.message 走同一套「有记录」的语义
+    const body = `[浏览器交互] 人类触发了「${String(event.name)}」，参数：${safeJson(event.payload ?? {})}`;
+    this.runner.mailbox.send({ from: 'human', to: 'lead', kind: 'browser', body });
+    this.runner.log.append({ type: 'mail.message', from: 'human', to: 'lead', kind: 'browser', body });
+
+    this.start();
+    const lead = this.runner.pool.get('lead');
+    if (lead === undefined) {
+      // Agent 不在也照样留痕：事件已经落日志，人类交互不该因为 Agent 崩了就丢
+      this.#emit({ type: 'state', data: this.state() });
+      return { ok: true };
+    }
+
+    try {
+      lead.send({
+        t: 'browser.event',
+        name: String(event.name ?? ''),
+        payload: (event.payload ?? {}) as Record<string, unknown>,
+        source: 'human',
+      });
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      this.logger.error('browser.event 投递失败', { error: message });
+      return { ok: false, error: message };
+    }
+
+    this.#busySince = Date.now();
+    this.#emit({ type: 'state', data: this.state() });
+    return { ok: true };
   }
 
   documentPayload(): ClientState['document'] {
@@ -435,6 +521,15 @@ export class ClientSession {
   }
 }
 
+/** 序列化不可信 payload：失败也不能让受理流程崩 */
+function safeJson(value: unknown): string {
+  try {
+    return JSON.stringify(value) ?? '{}';
+  } catch {
+    return '{}';
+  }
+}
+
 function summarize(event: LoggedEvent): string {
   switch (event.type) {
     case 'agent.spawn':
@@ -453,6 +548,10 @@ function summarize(event: LoggedEvent): string {
       return `收到来自 ${String(event.from)} 的消息`;
     case 'ui.patch':
       return `界面改动 ${String(event.op)} @ ${String(event.scope)}${event.rejected === true ? '（被拒绝）' : ''}`;
+    case 'browser.event':
+      return event.kind === 'emit'
+        ? `浏览器交互：${String(event.name)}`
+        : `浏览器${String(event.kind)}：${String(event.name ?? '')}`;
     case 'agent.frame':
       return `帧 ${String((event.frame as Frame | undefined)?.t ?? '')}`;
     default:
