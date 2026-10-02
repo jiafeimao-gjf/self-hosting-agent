@@ -47,6 +47,21 @@
 | **CLI-010** | specs/011-client.md | 服务端可以只监听 127.0.0.1（默认），不对外暴露。 | `test/server.test.ts` · 默认只监听 127.0.0.1，不对外暴露 |
 | **CLI-011** | specs/011-client.md | `POST /api/client/revert` 让人类**不必经过 Agent** 就能把被改过的客户端源码回滚（架构底线：人类永远能一键回滚）。 | `test/server.test.ts` · POST /api/client/revert 让人类不经过 Agent 就能回滚客户端源码 |
 | **CLI-012** | specs/011-client.md | `/api/state` 的 `messages` 是**完整对话投影**（人类消息 + Agent 说过的话，按时间归并）。前端会据此整体重建对话流，只投影邮件类消息会把 Agent 的回复冲掉。 | `test/server.test.ts` · 对话投影同时包含人类消息与 Agent 说过的话（只投影邮件会冲掉回复） |
+| **CMD-001** | specs/020-conversations.md | `/help` 列出全部命令，且每条命令都真的存在（表中没有幽灵命令）。 | `test/client-conversations-ui.test.ts` · /help 走命令通道，output 渲染成与人类 / Agent 消息不同款的系统消息<br>`test/conversations.test.ts` · /help 列出全部命令，且表里没有幽灵命令 |
+| **CMD-002** | specs/020-conversations.md | `/clear` 清空可见对话与上下文，但**不删磁盘上的历史**；清空后投影只剩清空之后的内容，Agent 下一轮也看不到清空前的对话。 | `test/conversations.test.ts` · /clear 清空显示与上下文，但磁盘上的历史一个字都不删 |
+| **CMD-003** | specs/020-conversations.md | `/history` 导出 Markdown 到 `history/` 目录，返回真实存在的路径与行数；`/history list` 能列出来。 | `test/conversations.test.ts` · /history 真的落盘，/history list 能列出来 |
+| **CMD-004** | specs/020-conversations.md | `/new` 新建并切换，`/list` 列出，`/switch <id>` 切换；切换通过 `action` 告知客户端。 | `test/client-conversations-ui.test.ts` · 命令 action：switch / created 切到目标对话，cleared 只重画当前对话<br>`test/conversations.test.ts` · /new 新建并切换、/list 列出、/switch 切换，并通过 action 告知客户端 |
+| **CMD-005** | specs/020-conversations.md | 未知命令返回明确错误，且**不会**被当成消息送给模型（不产生 `mail.message`，不惊动 Agent）。 | `test/client-conversations-ui.test.ts` · 未知命令绝不发给模型：任何 / 前缀都走 /api/command，失败结果也渲染成可见系统消息<br>`test/conversations.test.ts` · 未知命令明确报错，且绝不被当成消息送给模型 |
+| **CMD-006** | specs/020-conversations.md | 命令不依赖模型：整个过程不发生模型调用（用假模型/脚本模型也能跑通）。 | `test/conversations.test.ts` · 命令完全不依赖模型：脚本模型下也能跑通全部命令 |
+| **CMD-007** | specs/020-conversations.md | 命令对空参数/多余参数的处理明确：`/switch` 缺参数报错，`/new a b c` 以剩余文本为标题。 | `test/conversations.test.ts` · 参数处理明确：/switch 缺参数报错，/new 以剩余文本为标题<br>`test/conversations.test.ts` · parseCommand 只认行首斜杠，其余当普通消息 |
+| **CONV-001** | specs/020-conversations.md | `ConversationRegistry` 按 id 惰性创建会话：同一 id 两次拿到同一实例，不同 id 互不相同，且各自 `dir` 在 `<root>/conversations/<id>` 下。 | `test/conversations.test.ts` · 注册表按 id 惰性开门：同 id 同实例，不同 id 不同实例，目录在 conversations/<id> 下 |
+| **CONV-002** | specs/020-conversations.md | 新建对话返回合法 id 与标题；省略标题时给默认标题；id 冲突时自动避让而不是覆盖已有对话。 | `test/conversations.test.ts` · 新建对话：合法 id、默认标题、冲突自动避让 |
+| **CONV-003** | specs/020-conversations.md | 非法 id（超长、大写、`..`、路径分隔符）一律拒绝，不接受客户端指定任意目录。 | `test/conversations.test.ts` · 非法 id 一律拒绝：超长、大写、.. 、路径分隔符 |
+| **CONV-004** | specs/020-conversations.md | `GET /api/conversations` 列出全部对话并标出 active；`POST` 新建后 active 指向新对话；`DELETE` 删除后不再出现，且默认对话不可删。 | `test/client-conversations-ui.test.ts` · 对话切换器：列出全部对话并标出 active，新建 / 删除都走冻结契约<br>`test/conversations.test.ts` · 对话列表 / 新建 / 删除：active 跟着走，默认对话不可删 |
+| **CONV-005** | specs/020-conversations.md | 不传 `conversation` 时所有既有路由都作用在 `default` 上（向后兼容）。 | `test/conversations.test.ts` · 不传 conversation 时所有路由作用在 default 上（向后兼容） |
+| **CONV-006** | specs/020-conversations.md | 每个对话的事件流互不串扰：给 A 发消息只会在 A 的流上看到事件。 | `test/client-conversations-ui.test.ts` · 每个对话一条独立 SSE：切换时关旧流、按新 id 重开，事件不串扰<br>`test/conversations.test.ts` · 对话之间的事件流互不串扰 |
+| **CONV-007** | specs/020-conversations.md | 切换对话不丢状态：A 渲染过界面文档后切到 B 再切回 A，A 的文档版本与内容原样还在。 | `test/client-conversations-ui.test.ts` · 切走再切回：本地绘制缓存作废并重新拉取该对话的 state，界面文档原样重画<br>`test/conversations.test.ts` · 切换对话不丢状态：A 的界面文档切走再切回来原样还在 |
+| **CONV-008** | specs/020-conversations.md | 删除对话会回收它的 Agent 子进程（不留孤儿）。 | `test/conversations.test.ts` · 删除对话会回收它的 Agent 子进程，不留孤儿 |
 | **DIAG-001** | specs/018-diagnostics.md | 记录器按级别过滤：低于阈值的记录既不落盘也不进 sink；每条含 `ts/level/scope/message`，可带结构化 `data`。 | `test/logging.test.ts` · 记录器按级别过滤，每条含 ts/level/scope/message 且可带结构化 data |
 | **DIAG-002** | specs/018-diagnostics.md | 记日志失败不影响主流程：目录不可写时自动退化为内存日志，调用方不抛异常。 | `test/logging.test.ts` · 记日志失败不影响主流程：目录建不出来就退化为内存日志，调用方不抛异常 |
 | **DIAG-003** | specs/018-diagnostics.md | 子进程 stderr 被消费：内容逐行写入诊断日志，且带 `agent:<id>` 标签（补之前它没有任何订阅者）。 | `test/logging.test.ts` · 子进程 stderr 被消费：逐行写进诊断日志并带 agent 标签 |
@@ -217,10 +232,21 @@
 | **UI3-006** | specs/017-settings-ui.md | 本地校验拦住非法输入（空 Base URL / 空模型名 / 未知协议 / 坏数字）且不发请求；合法则 `PUT /api/settings`，成功后回到对话并提示。 | `test/client-settings-ui.test.ts` · 本地校验拦住非法输入且不发请求；合法则 PUT /api/settings，成功后回到对话并提示 |
 | **UI3-007** | specs/017-settings-ui.md | 测试连接调 `POST /api/settings/test`：成功显示延迟 ms 与模型回复片段，失败显示可读错误，缺字段退化不炸。 | `test/client-settings-ui.test.ts` · 测试连接调 POST /api/settings/test：成功显示延迟与回复片段，失败显示可读错误 |
 | **UI3-008** | specs/017-settings-ui.md | 防御与安全：Key 不进 localStorage / 日志 / URL 且永不回显明文，进入 DOM 的文本全部转义，任意坏输入不抛异常。 | `test/client-settings-ui.test.ts` · 防御与安全：Key 不进浏览器存储 / 日志 / URL，文本全部转义，坏输入不抛异常 |
+| **WS-001** | specs/021-workspace.md | 工作空间根目录在 `<dir>/conversations/<id>/workspace` 下，首次写入时自动创建。 | `test/workspace.test.ts` · 工作空间落在 <dir>/conversations/<id>/workspace 下，首次写入时自动创建 |
+| **WS-002** | specs/021-workspace.md | `workspace.write` 写入成功返回字节数；`append: true` 追加而不是覆盖。 | `test/workspace.test.ts` · write 返回字节数；append 是追加而不是覆盖<br>`test/workspace.test.ts` · 宿主工具 workspace.write/read/list 走的是同一套校验 |
+| **WS-003** | specs/021-workspace.md | 路径穿越一律拒绝：`../x`、`a/../../x`、绝对路径、`..` 单独一段都不能写出根目录之外。 | `test/workspace.test.ts` · 路径穿越一律拒绝：.. / 绝对路径 / 盘符 / 深挖 |
+| **WS-004** | specs/021-workspace.md | 拒绝时无副作用：被拒的写入不留文件、不改已有文件。 | `test/workspace.test.ts` · 被拒绝的写入不留任何副作用 |
+| **WS-005** | specs/021-workspace.md | 单文件与总量有上限，超限返回 `WORKSPACE_FULL` 且不写半个文件。 | `test/workspace.test.ts` · 单文件与总量超限都拒绝，且不写半个文件 |
+| **WS-006** | specs/021-workspace.md | `workspace.read` 读到不存在的文件返回明确错误码；超大文件读取时截断并标记。 | `test/workspace.test.ts` · read：不存在的文件报 NOT_FOUND；超大文件截断并标记 |
+| **WS-007** | specs/021-workspace.md | `workspace.list` 只列元信息（路径/字节/时间），**不返回文件内容**。 | `test/workspace.test.ts` · list 只给元信息，不返回文件内容 |
+| **WS-008** | specs/021-workspace.md | `GET /api/workspace/file` 按需加载：内容参与本次响应，但**不出现在** `/api/state` 快照里。 | `test/workspace.test.ts` · HTTP：列表只给元信息，内容按需加载；/api/state 里不含文件内容 |
+| **WS-009** | specs/021-workspace.md | 越界或非法路径的 HTTP 请求返回 400 且不泄漏根目录之外的任何信息。 | `test/workspace.test.ts` · HTTP 越界路径返回 400，且不泄漏根目录之外的信息 |
+| **WS-010** | specs/021-workspace.md | 客户端「文件」页签：列出文件、点击动态加载、空态与错误态都不白屏、内容以纯文本渲染。 | `test/client-conversations-ui.test.ts` · 文件页签：列表只给元信息，点击才动态加载内容，纯文本渲染且空态 / 错误态 / 截断态可见 |
+| **WS-011** | specs/021-workspace.md | 工作空间隔离：对话 A 写的文件在对话 B 的文件列表里看不到。 | `test/workspace.test.ts` · 工作空间按对话隔离：A 写的文件在 B 里看不到 |
 
 ## 统计
 
-- 验收标准：**213** 条
-- 已覆盖：**213** 条
+- 验收标准：**239** 条
+- 已覆盖：**239** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

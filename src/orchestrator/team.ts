@@ -24,6 +24,7 @@ import type { Frame } from '../protocol/frames.ts';
 import { HOST_TOOL_NAMES, createHostTools } from './host-tools.ts';
 import type { ClientChangedPayload, HostRuntime, HostTool } from './host-tools.ts';
 import { BrowserHost } from '../browser/document.ts';
+import { WorkspaceStore } from '../workspace/store.ts';
 import { silentLogger } from '../log/logger.ts';
 import type { Logger } from '../log/logger.ts';
 import type { ClientSource } from './client-source.ts';
@@ -52,6 +53,8 @@ export interface TeamRunnerOptions {
   onBrowserChanged?: (doc: { version: number; title: string; html: string; allowNetwork: boolean }) => void;
   /** 可注入的浏览器宿主（测试与恢复现场用） */
   browser?: BrowserHost;
+  /** 可注入的工作空间（默认 <dir>/workspace） */
+  workspace?: WorkspaceStore;
 }
 
 export interface SpawnAgentOptions {
@@ -78,6 +81,8 @@ export class TeamRunner implements HostRuntime {
   readonly pool: AgentPool;
   /** SPEC-019 内置浏览器的宿主侧文档 */
   readonly browser: BrowserHost;
+  /** SPEC-021 工作空间 */
+  readonly workspace: WorkspaceStore;
   readonly board: TaskBoard;
   readonly mailbox: Mailbox;
   readonly document: ViewDocument;
@@ -115,6 +120,7 @@ export class TeamRunner implements HostRuntime {
     this.clientSource = options.clientSource;
     this.onClientChanged = options.onClientChanged;
     this.browser = options.browser ?? new BrowserHost();
+    this.workspace = options.workspace ?? new WorkspaceStore({ root: path.join(this.dir, 'workspace') });
     this.onBrowserChanged = options.onBrowserChanged;
   }
 

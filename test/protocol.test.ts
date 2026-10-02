@@ -163,6 +163,8 @@ test('每个帧类型都能编码-解码往返且不丢字段', () => {
     'approval.reply': { t: 'approval.reply', id: 'c41', decision: 'allow_once', reason: '人类同意' },
     interrupt: { t: 'interrupt', reason: 'human_took_over' },
     'tool.reply': { t: 'tool.reply', id: 'c41', ok: true, result: '{"pid":4021}' },
+    // SPEC-020：清空对话（无字段）
+    'conversation.clear': { t: 'conversation.clear' },
     // SPEC-019：人类在内置浏览器里的交互回流
     'browser.event': { t: 'browser.event', name: '导出 CSV', payload: { fmt: 'csv' }, source: 'human' },
     'agent.thinking': { t: 'agent.thinking', agent: 'lead', seq: 118, text: '正在设计…' },

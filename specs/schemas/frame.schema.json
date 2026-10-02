@@ -170,6 +170,29 @@
       }
     },
     {
+      "title": "conversation.clear",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t"
+      ],
+      "properties": {
+        "t": {
+          "const": "conversation.clear"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        }
+      }
+    },
+    {
       "title": "browser.event",
       "type": "object",
       "additionalProperties": false,

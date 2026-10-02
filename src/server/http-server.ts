@@ -9,6 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { ClientSession, SessionEvent } from './session.ts';
+import { ConversationRegistry } from './conversations.ts';
+import { runCommand } from './commands.ts';
 import { silentLogger } from '../log/logger.ts';
 import type { Logger } from '../log/logger.ts';
 
@@ -34,6 +36,8 @@ export interface ServeOptions {
   clientDir?: string;
   /** 诊断日志：记录每条请求与每个服务端错误 */
   logger?: Logger;
+  /** SPEC-020 多对话：给了就按 ?conversation= 取会话；不给则退化成单会话模式 */
+  registry?: ConversationRegistry;
 }
 
 export interface RunningServer {
@@ -86,15 +90,42 @@ export function resolveClientAsset(clientDir: string, urlPath: string): string |
   return full;
 }
 
+/** 单会话模式：命令里用到 registry 的地方退化成一个只有 default 的只读壳 */
+function singleRegistry(session: ClientSession): ConversationRegistry {
+  const registry = new ConversationRegistry({
+    root: path.dirname(session.dir),
+    open: () => session,
+  });
+  return registry;
+}
+
 export function createRequestHandler(options: ServeOptions): http.RequestListener {
   const clientDir = path.resolve(options.clientDir ?? DEFAULT_CLIENT_DIR);
-  const { session } = options;
+  const defaultSession = options.session;
+  const registry = options.registry;
   const logger = options.logger ?? silentLogger;
 
   return (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const route = url.pathname;
     const method = req.method ?? 'GET';
+
+    // SPEC-020：所有既有路由都用 ?conversation=<id> 定位会话，省略即默认对话。
+    // 用一个局部 `session` 遮蔽掉默认会话，既有路由因此**一行都不用改**。
+    const conversationId = url.searchParams.get('conversation') ?? defaultSession.id ?? 'default';
+    let session: ClientSession = defaultSession;
+    if (registry !== undefined) {
+      if (!ConversationRegistry.isValidId(conversationId)) {
+        sendJson(res, 400, { ok: false, error: `BAD_CONVERSATION_ID: ${conversationId}` });
+        return;
+      }
+      if (url.searchParams.has('conversation') || conversationId !== defaultSession.id) {
+        // 显式指定了对话 = 人类切过去了；不带参数的请求不该抢走 active
+        session = registry.get(conversationId, { activate: true });
+      } else {
+        session = registry.get(conversationId, { activate: false });
+      }
+    }
 
     // 访问日志：以前这个服务一条请求都不记，403/404/500 外部完全不可见
     const startedAt = Date.now();
@@ -105,6 +136,103 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       else if (res.statusCode >= 400) logger.warn('请求被拒', line);
       else logger.debug('请求完成', line);
     });
+
+    // ── SPEC-020 对话管理 ──
+    if (route === '/api/conversations' && method === 'GET') {
+      if (registry === undefined) {
+        sendJson(res, 200, {
+          ok: true,
+          active: defaultSession.id,
+          conversations: [
+            {
+              id: defaultSession.id,
+              title: defaultSession.title,
+              createdAt: new Date().toISOString(),
+              lastActiveAt: defaultSession.lastActiveAt(),
+              messages: defaultSession.messageCount(),
+            },
+          ],
+        });
+        return;
+      }
+      sendJson(res, 200, { ok: true, active: registry.active, conversations: registry.list() });
+      return;
+    }
+
+    if (route === '/api/conversations' && method === 'POST') {
+      if (registry === undefined) {
+        sendJson(res, 400, { ok: false, error: '单会话模式下不支持新建对话' });
+        return;
+      }
+      readBody(req)
+        .then((body) => {
+          const created = registry.create(typeof body.title === 'string' ? body.title : undefined);
+          sendJson(res, 200, { ok: true, conversation: created });
+        })
+        .catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
+      return;
+    }
+
+    if (route.startsWith('/api/conversations/') && method === 'DELETE') {
+      if (registry === undefined) {
+        sendJson(res, 400, { ok: false, error: '单会话模式下不支持删除' });
+        return;
+      }
+      const id = decodeURIComponent(route.slice('/api/conversations/'.length));
+      if (!ConversationRegistry.isValidId(id)) {
+        sendJson(res, 400, { ok: false, error: 'BAD_CONVERSATION_ID' });
+        return;
+      }
+      registry
+        .delete(id)
+        .then((outcome) => sendJson(res, outcome.ok ? 200 : 400, outcome.ok ? { ok: true } : { ok: false, error: outcome.error }))
+        .catch((err: Error) => sendJson(res, 500, { ok: false, error: err.message }));
+      return;
+    }
+
+    // ── SPEC-020 `/` 命令：服务端执行，客户端只按前缀路由 ──
+    if (route === '/api/command' && method === 'POST') {
+      readBody(req)
+        .then((body) => {
+          const text = typeof body.text === 'string' ? body.text : '';
+          const result = runCommand(text, { session, registry: registry ?? singleRegistry(session) });
+          sendJson(res, result.ok ? 200 : 400, result);
+        })
+        .catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
+      return;
+    }
+
+    // ── SPEC-021 工作空间：列表只给元信息，内容按需加载 ──
+    if (route === '/api/workspace' && method === 'GET') {
+      sendJson(res, 200, { ok: true, root: session.runner.workspace.root, files: session.runner.workspace.list() });
+      return;
+    }
+
+    if (route === '/api/workspace/file' && method === 'GET') {
+      const target = url.searchParams.get('path') ?? '';
+      const read = session.runner.workspace.read({ path: target });
+      if (!read.ok) {
+        sendJson(res, 400, { ok: false, error: `${read.code}: ${read.reason}` });
+        return;
+      }
+      sendJson(res, 200, read);
+      return;
+    }
+
+    if (route === '/api/history' && method === 'GET') {
+      sendJson(res, 200, { ok: true, files: session.listHistory() });
+      return;
+    }
+
+    if (route === '/api/history/file' && method === 'GET') {
+      const read = session.readHistoryFile(url.searchParams.get('name') ?? '');
+      if (!read.ok) {
+        sendJson(res, 400, { ok: false, error: read.error });
+        return;
+      }
+      sendJson(res, 200, read);
+      return;
+    }
 
     if (route === '/api/state' && method === 'GET') {
       sendJson(res, 200, session.state());

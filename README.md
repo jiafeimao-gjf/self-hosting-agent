@@ -8,18 +8,50 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **213** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **213 / 213** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **220** 个，全绿（约 8s，零第三方依赖） |
+| 验收标准 | **239** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **239 / 239** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **254** 个，全绿（约 8s，零第三方依赖） |
 | 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
 | P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
 | P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
 | P2 已落地 | **可用客户端**：HTTP + SSE 服务、浏览器 Surface（对话 / 沙箱界面面板 / 检查器）、事件日志投影的多轮记忆、本机 Ollama 直连 |
 | P3 已落地 | **客户端自举**：Agent 可改 `src/client/**` 自身源码，写入前跑项目自检、不过自动回滚，带版本历史 / 可读 diff / 一键回滚 / 审计，CSS 变更无刷新热替换 |
+| P7 已落地 | **多对话 + `/` 命令 + 工作空间**：一个对话一个独立单元（独立子进程/文档/事件日志/工作空间），顶栏切换；`/help /clear /history /new /list /switch /files /cat /whoami`；Agent 用 `workspace.write/read/list` 真实落盘，「文件」页签按需动态加载 |
 | P6 已落地 | **内置浏览器模块**：Agent 直接渲染任意 HTML 到**独立的第二个沙箱**（与界面面板并存），文档里的脚本真的跑；点击/提交/`AgentClient.emit` 经 postMessage 桥回流，作为人类动作送进 Agent 的上下文 |
 | P5 已落地 | **诊断日志 + 真模型跑通**：logger（级别/JSONL/子进程 stderr 收口/崩溃兜底/访问日志/事件日志轮转）；工具名线上合法化与参数 schema 透传——这两条修完，真 DeepSeek 端点才真正画出界面 |
 | P4 已落地 | **设置页 + 可自配模型**：浏览器里切换 OpenAI 兼容 / Anthropic 两种协议，填 Base URL / 模型 / Key / 温度 / 超时，四个预设、连接测试、保存即生效（Lead 重启且历史不丢）；Key 打码、永不回显 |
 | 尚未落地 | Electron/Tauri 外壳、人类审批 UI（当前人类在场即自动放行但全程留痕）、更细粒度的热更新（HMR） |
+
+## 多对话与工作空间
+
+一个**对话**是一个独立单元：自己的目录、自己的 Lead 子进程、自己的界面/浏览器文档、自己的事件日志、**自己的工作空间**。
+顶栏切换对话，切走不打断（Agent 在后台照跑），切回来一次同步到位。
+
+```
+.agent-client/<run>/conversations/<id>/
+├── meta.json          标题 / 创建时间
+├── events/            这个对话的事件日志（审计与回放）
+├── agents/lead/       Lead 的日志（上下文就是它的投影）
+├── history/           `/history` 导出的人类可读 Markdown
+└── workspace/         Agent 用 workspace.write 落盘的文件（人类在「文件」页签看到）
+```
+
+`/` 开头是命令，服务端执行、不经模型：
+
+| 命令 | 作用 |
+| --- | --- |
+| `/help` `/whoami` | 帮助 / 当前对话与模型 |
+| `/clear` | 清空**显示与上下文**（写一条边界标记，宿主与 Agent 共用同一套投影语义）；磁盘日志一个字不删 |
+| `/history` `/history list` | 导出成 Markdown / 列出历史文件 |
+| `/new` `/list` `/switch` | 新建 / 列出 / 切换对话 |
+| `/files` `/cat <路径>` | 列出 / 读取工作空间文件 |
+
+**工作空间的全部难点是路径**：`path` 来自不可信输入，规则只有一条——解析后必须仍在工作空间之内。
+`..` 一律拒绝（**不做归一化猜测**，哪怕它其实落在根内）、绝对路径与盘符拒绝、符号链接拒绝、
+单文件 256KB / 总量 4MB / 500 个文件上限；所有校验都在**动磁盘之前**完成，被拒绝的写入不留半个文件。
+
+「**动态加载**」是指：`GET /api/workspace` 只回元信息（路径/大小/时间），内容只在点击时走
+`GET /api/workspace/file` 取——叶子节点按需拉，状态快照永远不随文件增长而膨胀。
 
 ## 内置浏览器：Agent 直接给一份 HTML
 

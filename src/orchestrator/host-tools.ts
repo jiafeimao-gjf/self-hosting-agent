@@ -12,6 +12,7 @@ import type { TaskBoard } from '../taskboard/board.ts';
 import type { ViewDocument } from '../surface/document.ts';
 import type { SurfaceIngest } from '../surface/ingest.ts';
 import type { BrowserHost } from '../browser/document.ts';
+import type { WorkspaceStore } from '../workspace/store.ts';
 import type { ClientSource } from './client-source.ts';
 
 /** 宿主工具清单：宿主与子进程两边都按这份名字对齐 */
@@ -21,6 +22,9 @@ export const HOST_TOOL_NAMES = [
   'agent.wait',
   'ui.render',
   'browser.render',
+  'workspace.write',
+  'workspace.read',
+  'workspace.list',
   'task.create',
   'task.claim',
   'task.complete',
@@ -50,6 +54,8 @@ export interface HostRuntime {
   ingest: SurfaceIngest;
   /** SPEC-019 内置浏览器：Agent 直接给一份 HTML 时用它 */
   browser: BrowserHost;
+  /** SPEC-021 工作空间：Agent 落盘文件的地方（路径受限于该目录） */
+  workspace: WorkspaceStore;
   document: ViewDocument;
   spawnAgent(
     agentId: string,
@@ -205,6 +211,35 @@ export function createHostTools(): HostTool[] {
           });
         }
         return done({ version: result.version, title: result.title });
+      },
+    },
+    {
+      name: 'workspace.write',
+      description: '把内容写进当前对话的工作空间（磁盘持久化），返回字节数',
+      async run(args, runtime) {
+        const result = runtime.workspace.write({
+          path: args.path,
+          content: args.content,
+          ...(args.append === true ? { append: true } : {}),
+        });
+        if (!result.ok) return fail(`${result.code}: ${result.reason}`);
+        return done({ path: result.path, bytes: result.bytes });
+      },
+    },
+    {
+      name: 'workspace.read',
+      description: '读取工作空间里的一个文件',
+      async run(args, runtime) {
+        const result = runtime.workspace.read({ path: args.path });
+        if (!result.ok) return fail(`${result.code}: ${result.reason}`);
+        return done({ path: result.path, bytes: result.bytes, content: result.content, truncated: result.truncated });
+      },
+    },
+    {
+      name: 'workspace.list',
+      description: '列出工作空间里的文件（路径 / 字节数 / 修改时间）',
+      async run(_args, runtime) {
+        return done({ files: runtime.workspace.list() });
       },
     },
     {

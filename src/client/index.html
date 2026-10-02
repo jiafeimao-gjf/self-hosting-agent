@@ -12,6 +12,18 @@
     <header class="topbar">
       <h1 class="brand">Agent Client</h1>
       <span class="brand-sub">界面由 Agent 亲手改造</span>
+      <!--
+        SPEC-020：多对话切换器（下拉 + 新建 + 删除）。
+        选项由 src/client/conversations.js 运行时填（标题 + 消息数），
+        这里不写死任何对话；默认对话不可删，删除按钮由控制器禁用。
+      -->
+      <div class="conversation-switcher">
+        <label class="conversation-label" for="conversation-select">对话</label>
+        <select id="conversation-select" class="conversation-select" aria-label="切换对话"></select>
+        <button id="conversation-new" class="btn" type="button" title="新建一个独立对话">新建</button>
+        <button id="conversation-delete" class="btn btn-danger" type="button" title="删除当前对话（默认对话不可删）">删除</button>
+        <span id="conversation-status" class="conversation-status" role="status" aria-live="polite"></span>
+      </div>
       <span id="conn" class="conn" data-state="connecting" aria-live="polite">连接中…</span>
       <!-- SPEC-017：当前生效的模型，形如「qwen3:4b · 本机 Ollama」，文本由 app.js 用 textContent 写入 -->
       <span id="current-model" class="model-chip" title="当前生效的模型">—</span>
@@ -35,7 +47,9 @@
           <span id="busy-text">Agent 正在思考…</span>
         </div>
         <form id="composer" class="composer" autocomplete="off">
-          <textarea id="input" class="input" rows="2" placeholder="跟 Agent 说点什么…" aria-label="人类输入"></textarea>
+          <textarea id="input" class="input" rows="2" placeholder="跟 Agent 说点什么…（/ 开头是命令）" aria-label="人类输入"></textarea>
+          <!-- SPEC-020：输入以 / 开头时显示「这是命令」，只由前缀路由决定走哪个端点 -->
+          <span id="command-hint" class="command-hint" hidden>回车执行命令</span>
           <button id="send" class="btn btn-primary" type="submit">发送</button>
         </form>
       </section>
@@ -68,6 +82,15 @@
               aria-controls="panel-browser"
               data-panel-tab="browser"
             >浏览器</button>
+            <button
+              id="panel-tab-files"
+              class="tab"
+              type="button"
+              role="tab"
+              aria-selected="false"
+              aria-controls="panel-files"
+              data-panel-tab="files"
+            >文件</button>
           </div>
           <span class="hint">sandbox iframe · srcdoc 实时更新，不刷新页面</span>
           <span class="version-chip">沙箱 <b id="surface-version">v0</b></span>
@@ -104,6 +127,28 @@
               ></iframe>
               <div id="browser-empty" class="browser-empty">
                 暂无浏览器文档 · Agent 调用 browser.render 后会出现在这里
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!--
+          SPEC-021 工作空间「文件」页签。
+          列表只来自 GET /api/workspace（元信息：路径 / 字节 / 时间），
+          **不包含任何文件内容**；点击某个文件时才请求 GET /api/workspace/file，
+          内容只经 textContent 写入 #file-content（纯文本，绝不当 HTML 插入）。
+        -->
+        <div id="panel-files" class="panel-body" data-panel="files" hidden>
+          <div class="files-frame">
+            <div class="files-bar">
+              <span id="file-root" class="files-root" title="工作空间根目录">工作空间</span>
+              <span id="file-status" class="file-status" role="status" aria-live="polite"></span>
+            </div>
+            <div class="files-stage">
+              <div id="file-list" class="file-list" role="list" aria-label="工作空间文件"></div>
+              <div class="file-view">
+                <pre id="file-content" class="file-content" tabindex="0" aria-label="文件内容"></pre>
+                <div id="file-empty" class="file-empty">工作空间暂无文件</div>
               </div>
             </div>
           </div>

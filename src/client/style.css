@@ -55,7 +55,9 @@ body {
 .topbar {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 12px;
+  row-gap: 6px;
   padding: 10px 18px;
   border-bottom: 1px solid var(--border);
   background: rgba(11, 16, 28, 0.92);
@@ -1058,4 +1060,257 @@ body {
   .field-wide {
     grid-column: span 1;
   }
+}
+
+/* ---------- 多对话切换器（SPEC-020 §三） ---------- */
+
+.conversation-switcher {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conversation-label {
+  color: var(--text-muted);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.conversation-select {
+  max-width: 220px;
+  padding: 3px 8px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(5, 6, 10, 0.7);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.conversation-select:focus {
+  outline: none;
+  border-color: var(--cyan);
+  box-shadow: 0 0 0 3px rgba(34, 211, 238, 0.15);
+}
+
+.conversation-select:disabled {
+  color: var(--text-muted);
+}
+
+/* 默认对话不可删：按钮禁用而不是消失，人类看得出「有这功能，只是不能删」 */
+#conversation-delete:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+.conversation-status {
+  color: var(--warning);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+/* ---------- 命令输入提示与系统消息（SPEC-020 §二 / §三） ---------- */
+
+.command-hint {
+  align-self: center;
+  padding: 2px 8px;
+  border: 1px dashed rgba(34, 211, 238, 0.5);
+  border-radius: 999px;
+  color: var(--cyan);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.command-hint[hidden] {
+  display: none;
+}
+
+/* 命令结果与人类 / Agent 消息明显不同色：虚线边框 + 青色系 */
+.msg-system {
+  align-self: stretch;
+  max-width: 96%;
+  border: 1px dashed var(--border-strong);
+  background: rgba(34, 211, 238, 0.06);
+  color: var(--text-muted);
+}
+
+.msg-system .cmd-echo {
+  margin-left: 8px;
+  color: var(--cyan);
+  font-family: var(--mono);
+  font-size: 12.5px;
+}
+
+.msg-system .cmd-output {
+  margin: 6px 0 0;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.msg-system.is-fail {
+  border-color: rgba(248, 113, 113, 0.5);
+  background: rgba(248, 113, 113, 0.08);
+}
+
+.msg-system.is-fail .cmd-output {
+  color: var(--danger);
+}
+
+/* ---------- 工作空间「文件」页签（SPEC-021 §四） ---------- */
+
+.files-frame {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px;
+}
+
+.files-bar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 20px;
+}
+
+.files-root {
+  flex: none;
+  max-width: 52%;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-status {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-status[data-tone="danger"] {
+  color: var(--danger);
+}
+
+.file-status[data-tone="warning"] {
+  color: var(--warning);
+}
+
+.files-stage {
+  display: grid;
+  flex: 1;
+  min-height: 0;
+  grid-template-columns: minmax(150px, 0.85fr) minmax(0, 1.15fr);
+  gap: 10px;
+}
+
+.file-list {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+  gap: 4px;
+  overflow: auto;
+}
+
+/* 一行只有元信息（路径 / 字节 / 时间），内容要点击后才加载 */
+.file-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 5px 8px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: rgba(5, 6, 10, 0.5);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.file-row:hover {
+  border-color: rgba(34, 211, 238, 0.45);
+}
+
+.file-row.is-active {
+  border-color: var(--cyan);
+  background: rgba(34, 211, 238, 0.1);
+}
+
+.file-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  font-family: var(--mono);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.file-bytes,
+.file-mtime {
+  flex: none;
+  color: var(--text-muted);
+  font-family: var(--mono);
+  font-size: 11px;
+}
+
+.file-view {
+  position: relative;
+  display: flex;
+  min-height: 0;
+}
+
+.file-content {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 10px;
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* 空态 / 错误态 / 加载态都盖在内容区上：不留一块纯黑，也不白屏 */
+.file-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(5, 6, 10, 0.85);
+  color: var(--text-muted);
+  font-size: 12.5px;
+  text-align: center;
+}
+
+.file-empty[hidden] {
+  display: none;
+}
+
+/* 文件页签也要更多空间：一份文件内容挤在 150px 里是没法用的 */
+.grid:has(.zone-surface[data-active-panel='files']) {
+  grid-template-rows: minmax(0, 1.7fr) minmax(0, 1fr);
 }

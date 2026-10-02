@@ -16,6 +16,7 @@ import { TeamRunner } from './orchestrator/team.ts';
 import { ClientSession } from './server/session.ts';
 import type { ModelSettings } from './server/settings.ts';
 import { startServer } from './server/http-server.ts';
+import { ConversationRegistry } from './server/conversations.ts';
 import { ViewDocument } from './surface/document.ts';
 import { SurfaceIngest } from './surface/ingest.ts';
 import { validateViewSpec } from './surface/viewspec.ts';
@@ -265,15 +266,27 @@ async function runServe(argv: string[]): Promise<number> {
 
   fs.mkdirSync(dir, { recursive: true });
 
-  // 人类就坐在这个页面前面，所以审批门给「放行一次」的策略——但每一次都留痕可查
-  const session = new ClientSession({
+  // SPEC-020：一个对话一个会话，各自独立的目录/子进程/文档/事件日志。
+  // 会话是**惰性**打开的：只有真的用到某个对话时才建它、才拉起它的 Lead。
+  const makeSessionOptions = (id: string, dir: string): ConstructorParameters<typeof ClientSession>[0] => ({
     dir,
+    id,
     agentEnv,
     modelSettings,
+    // 人类就坐在这个页面前面，所以审批门给「放行一次」的策略——但每一次都留痕可查
     approval: new ApprovalGate({ policy: () => 'allow_once' }),
     logEcho: args['log-echo'] === 'true' || process.env.AGENT_LOG_ECHO === '1',
     ...(args['log-level'] === undefined ? {} : { logLevel: args['log-level'] as 'debug' | 'info' | 'warn' | 'error' }),
   });
+
+  const registry = new ConversationRegistry({
+    root: dir,
+    open: (id, conversationDir) => {
+      const settings = JSON.parse(fs.readFileSync(path.join(conversationDir, 'meta.json'), 'utf8')) as { title?: string };
+      return new ClientSession({ ...makeSessionOptions(id, conversationDir), title: settings.title ?? id });
+    },
+  });
+  const session = registry.get('default');
 
   // 宿主崩溃兜底：不留一段没人看的堆栈
   process.on('uncaughtException', (err) => {
@@ -286,7 +299,7 @@ async function runServe(argv: string[]): Promise<number> {
     });
   });
 
-  const server = await startServer({ session, port, logger: session.logger.child('http') });
+  const server = await startServer({ session, registry, port, logger: session.logger.child('http') });
 
   console.log('Agent Client · 可用态\n');
   console.log(`  打开：${server.url}`);

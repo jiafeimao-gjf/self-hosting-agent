@@ -7,11 +7,28 @@
 import type { LoggedEvent } from '../eventlog/log.ts';
 import type { ContextItem } from '../loop/loop.ts';
 
+/**
+ * `/clear` 之后，投影只看标记之后的那些事件。
+ *
+ * 关键：**宿主显示与子进程上下文用的是同一个函数**，所以「清空」只需要写一条标记，
+ * 两边同时生效，不存在「界面清了但 Agent 还记得」这种漂移。
+ * 磁盘上的旧日志一个字都不删（审计还在）。
+ */
+export function clearBoundary(events: LoggedEvent[]): number {
+  let boundary = 0;
+  for (const event of events) {
+    if (event.type === 'conversation.cleared') boundary = event.seq;
+  }
+  return boundary;
+}
+
 /** 只投影「对话内容」：谁说了什么、Agent 说了什么。工具噪音不进上下文。 */
 export function projectConversation(events: LoggedEvent[]): ContextItem[] {
   const items: ContextItem[] = [];
+  const boundary = clearBoundary(events);
 
   for (const event of events) {
+    if (event.seq <= boundary) continue;
     if (event.type === 'message.received') {
       items.push({
         role: event.from === 'human' ? 'human' : 'peer',

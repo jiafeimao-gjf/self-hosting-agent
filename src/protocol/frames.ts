@@ -46,6 +46,12 @@ export const FRAME_SPECS = {
    * 宿主工具桥：Loop 调不动「拉起一个进程」这种事，只能请 Kernel 代办。
    * Loop 发 tool.call（out），宿主执行后用它把结果回填（in）。
    */
+  'conversation.clear': {
+    direction: 'in',
+    required: {},
+    // `/clear`：宿主与子进程各写一条边界标记，投影只看标记之后的内容
+    optional: {},
+  },
   'browser.event': {
     direction: 'in',
     required: { name: 'string' },

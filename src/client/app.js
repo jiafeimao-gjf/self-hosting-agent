@@ -3,7 +3,10 @@
  * （订阅 `client.changed`：`.css` 无刷新热替换，`.js`/`.html` 只给人类点击的刷新横幅）；
  * SPEC-017 补上浏览器端设置页的接线（打开 / 关闭、保存、测试连接、当前模型 chip）；
  * SPEC-019 补上内置浏览器面板的接线（`browser` 事件 / `/api/state.browser` 字段 /
- * iframe 的 postMessage → `POST /api/browser/event`）。
+ * iframe 的 postMessage → `POST /api/browser/event`）；
+ * SPEC-020 补上多对话与 `/` 命令的接线（切换器、`?conversation=<id>`、切换即重开 SSE
+ * 并重画全部区域、`/` 前缀路由到 `/api/command`、命令结果渲染成系统消息）；
+ * SPEC-021 补上「文件」页签的接线（列表只来自 `/api/workspace`，内容点击时动态加载）。
  *
  * 分工：
  *
@@ -11,15 +14,30 @@
  *   不碰 DOM，`node --test` 里可以直接 import 断言（UI-008）；
  * - 下半部分 `boot()` 只做连线：EventSource 订阅 `/api/stream`、六个 SSE 事件、
  *   四个 POST 端点、把渲染结果塞进 DOM（UI-006 / UI-007）；设置页的纯逻辑与 DOM
- *   渲染在 `settings.js`，浏览器面板的纯逻辑与 DOM 渲染在 `browser.js`，
- *   这里只实例化并接线（UI3-001 / BROWSER-011）。
+ *   渲染在 `settings.js`，浏览器面板在 `browser.js`，多对话 / 命令 / 文件面板的
+ *   纯逻辑与控制器在 `conversations.js`，这里只实例化并接线（UI3-001 / BROWSER-011 /
+ *   CONV-004 / CMD-001 / WS-010）。
  *
  * 沙箱是架构的一环：Agent 给的 HTML 只进 `<iframe sandbox="allow-scripts" srcdoc>`，
  * 收到 `document` / `browser` 事件时**只更新 srcdoc**，宿主页面绝不刷新。
- * 两个沙箱（`#surface` 与 `#browser`）并存，互不覆盖。
+ * 三个沙箱面板（`#surface` / `#browser` / 文件）并存，互不覆盖。
  */
 
 import { createBrowserPanel } from './browser.js';
+import {
+  COMMAND_HINT_TEXT,
+  DEFAULT_CONVERSATION,
+  commandActionOf,
+  commandRequest,
+  conversationIdOf,
+  createConversationSwitcher,
+  createWorkspacePanel,
+  isCommandText,
+  normalizeCommandResult,
+  renderCommandResult,
+  streamUrl,
+  withConversation,
+} from './conversations.js';
 import { escapeHtml, renderViewSpec } from './renderer.js';
 import { createSettingsPage, currentModelText } from './settings.js';
 
@@ -33,6 +51,9 @@ export const CONNECTION_LABELS = {
 
 /** 事件时间线最多保留多少条 */
 export const MAX_TIMELINE = 80;
+
+/** SPEC-020：命令日志最多补回多少条（命令输出只在客户端，重画时要补回消息流） */
+export const MAX_COMMAND_LOG = 20;
 
 function isRecord(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -237,13 +258,17 @@ export function normalizeState(raw) {
         ? state.ui
         : {};
   const version = typeof doc.version === 'number' && Number.isFinite(doc.version) ? doc.version : 0;
+  // SPEC-020 给 /api/state 加了 `conversation:{id,title}` 字段，而这里历史上把
+  // `conversation` 当作消息数组的别名。所以别名只在它真的是数组时才认——
+  // 否则那份对话元信息会被当成「零条消息」。
+  const legacyMessages = Array.isArray(state.conversation) ? state.conversation : null;
   return {
     version,
     html: typeof doc.html === 'string' ? doc.html : '',
     scopes: toArray(doc.scopes),
     agents: toArray(state.agents ?? state.processes ?? state.agentTable),
     tasks: toArray(state.tasks ?? state.taskboard ?? state.board),
-    messages: toArray(state.messages ?? state.conversation ?? state.chat),
+    messages: toArray(state.messages ?? legacyMessages ?? state.chat),
     events: toArray(state.events ?? state.timeline ?? state.eventTail ?? state.tail),
   };
 }
@@ -446,6 +471,18 @@ function boot() {
     browserLastEvent: document.getElementById('browser-last-event'),
     panelTabs: Array.from(document.querySelectorAll('[data-panel-tab]')),
     panelBodies: Array.from(document.querySelectorAll('[data-panel]')),
+    // SPEC-020：顶栏多对话切换器与输入框的命令提示
+    conversationSelect: document.getElementById('conversation-select'),
+    conversationNew: document.getElementById('conversation-new'),
+    conversationDelete: document.getElementById('conversation-delete'),
+    conversationStatus: document.getElementById('conversation-status'),
+    commandHint: document.getElementById('command-hint'),
+    // SPEC-021：工作空间「文件」页签（列表只给元信息，内容点击时动态加载）
+    fileRoot: document.getElementById('file-root'),
+    fileList: document.getElementById('file-list'),
+    fileEmpty: document.getElementById('file-empty'),
+    fileStatus: document.getElementById('file-status'),
+    fileContent: document.getElementById('file-content'),
   };
 
   const state = {
@@ -462,7 +499,102 @@ function boot() {
     /** 忙碌态：真模型一轮可能几十秒，人类必须看得出「它在干活、等了多久」 */
     busySince: null,
     busyTimer: null,
+    /**
+     * SPEC-020：命令结果是**客户端**渲染的系统消息，服务端的对话投影里没有它。
+     * 每次 applyState 会整体重建消息列表，所以这里留一份当前对话的命令日志补回去
+     * （切对话时清空），否则 `/list`、`/help` 的输出会被下一次 state 事件冲掉。
+     */
+    commandLog: [],
   };
+
+  /**
+   * SPEC-020：当前对话。所有请求（SSE / state / message / command / browser 事件 /
+   * 工作空间）都跟着它走；切换时**关旧流、开新流**，绝不整页刷新。
+   */
+  let activeConversation = DEFAULT_CONVERSATION;
+  let switching = false;
+  /** 当前 SSE；切对话时必须关掉再换新的，绝不留下泄漏的 EventSource */
+  let currentStream = null;
+  /** 切换期间又有新目标时记下来，切完再追一次（人类连点 / 命令 action 撞上） */
+  let pendingSwitch = null;
+
+  const switcher = createConversationSwitcher({
+    nodes: {
+      select: dom.conversationSelect,
+      create: dom.conversationNew,
+      remove: dom.conversationDelete,
+      status: dom.conversationStatus,
+    },
+    request: (path, init) => requestJson(path, init),
+    onSwitch(id) {
+      void switchConversation(id);
+    },
+    onError(message) {
+      pushTimeline({ type: 'conversation.error', agent: 'host', ts: new Date().toISOString() });
+      appendMessage(renderMessage({ kind: 'error', agent: '宿主', text: message }));
+    },
+  });
+
+  const workspacePanel = createWorkspacePanel({
+    nodes: {
+      root: dom.fileRoot,
+      list: dom.fileList,
+      empty: dom.fileEmpty,
+      status: dom.fileStatus,
+      content: dom.fileContent,
+    },
+    request: (path, init) => requestJson(path, init),
+    onError() {
+      pushTimeline({ type: 'workspace.error', agent: 'host', ts: new Date().toISOString() });
+    },
+  });
+
+  if (dom.conversationNew !== null && dom.conversationNew !== undefined) {
+    dom.conversationNew.addEventListener('click', () => {
+      // 标题由服务端给默认值；人类要自定义标题可以在新建后走 /new <标题>
+      void switcher.create('');
+    });
+  }
+
+  if (dom.conversationDelete !== null && dom.conversationDelete !== undefined) {
+    dom.conversationDelete.addEventListener('click', () => {
+      void switcher.remove(switcher.getActive());
+    });
+  }
+
+  if (dom.conversationSelect !== null && dom.conversationSelect !== undefined) {
+    dom.conversationSelect.addEventListener('change', (event) => {
+      const target = event.target;
+      const id = target !== null && target !== undefined && typeof target.value === 'string' ? target.value : '';
+      if (id.length === 0) return; // 空态选项：不切
+      switcher.switchTo(id);
+    });
+  }
+
+  /**
+   * SPEC-021：点击文件行 → **这时才**动态加载内容（`/api/workspace/file`）。
+   * 用事件委托：列表每次都是整体重画，逐行绑定容易漏。
+   */
+  if (dom.fileList !== null && dom.fileList !== undefined) {
+    dom.fileList.addEventListener('click', (event) => {
+      const target = event.target;
+      const node = target instanceof Element ? target.closest('[data-file-path]') : null;
+      if (node === null) return;
+      const filePath = node.getAttribute('data-file-path');
+      if (filePath === null || filePath.length === 0) return;
+      void workspacePanel.openFile(filePath);
+    });
+  }
+
+  /** 给任意路由带上当前对话的查询串（省略即 default，SPEC-020 §一） */
+  function scoped(path) {
+    return withConversation(path, activeConversation);
+  }
+
+  /** 浏览器面板的事件回传也要落到当前对话上 */
+  function conversationRequest(path, options) {
+    return requestJson(scoped(path), options);
+  }
 
   /**
    * 渲染忙碌态。用 busySince 算「已等 N 秒」，而不是只显示一个静态的转圈——
@@ -574,6 +706,10 @@ function boot() {
     state.version = snapshot.version;
     setSurface(snapshot.html, snapshot.version);
 
+    // SPEC-020：/api/state 新增 `conversation:{id,title}`。这里只同步切换器的选中态，
+    // 不触发切换（切换由人类操作 / 命令 action / 删除三处驱动，免得回环）。
+    switcher.applyState(raw);
+
     // SPEC-019：/api/state 的 browser 字段。没有这个字段就保持现状——
     // 老服务端 / 别的快照不该把 SSE 刚送来的浏览器文档清空。
     browserPanel.applyState(raw);
@@ -597,6 +733,183 @@ function boot() {
 
     // SPEC-017：/api/state 若带了生效模型信息，顶栏 chip 跟着更新（没有就不冒充）
     settingsPage.applyEffectiveModel(raw);
+
+    // SPEC-020：命令输出补回消息流（服务端投影里没有它），顺序与 append 时一致
+    if (state.commandLog.length > 0) appendMessage(state.commandLog.join(''));
+  }
+
+  // -------------------------------------------------------------------------
+  // SPEC-020：多对话 —— 关旧流、按新 id 重开、重画全部区域（绝不刷新页面）
+  // -------------------------------------------------------------------------
+
+  /** 关掉当前 SSE。旧对话的流必须关掉，否则两个对话的事件会串在一起（CONV-006）。 */
+  function closeStream() {
+    if (currentStream === null) return;
+    try {
+      currentStream.close();
+    } catch {
+      // 关不掉也不能阻塞切换：置空后不会再被引用
+    }
+    currentStream = null;
+  }
+
+  /**
+   * 按当前对话重开 SSE。契约是「省略 conversation 即 default」，所以默认对话直接用
+   * 裸路径 `new EventSource('/api/stream')`（旧调用语义不变），其余带上 `?conversation=`。
+   */
+  function openStream() {
+    closeStream();
+    const source =
+      activeConversation === DEFAULT_CONVERSATION
+        ? new EventSource('/api/stream')
+        : new EventSource(streamUrl(activeConversation));
+    currentStream = source;
+    setConnection('connecting');
+    source.addEventListener('open', () => setConnection('open'));
+    source.addEventListener('error', () => {
+      setConnection(source.readyState === EventSource.CLOSED ? 'closed' : 'reconnecting');
+    });
+    source.addEventListener('state', (event) => applyState(parseData(event.data)));
+    source.addEventListener('frame', (event) => applyFrame(parseData(event.data)));
+    source.addEventListener('document', (event) => applyDocument(parseData(event.data)));
+    source.addEventListener('done', (event) => applyDone(parseData(event.data)));
+    // SPEC-014：客户端源码变更（事件名含点号，必须用完整名字订阅）
+    source.addEventListener('client.changed', (event) => applyClientChange(parseData(event.data)));
+    // SPEC-019：内置浏览器文档（html 已由宿主组合好，直接进 srcdoc 的沙箱）。
+    // Agent 明确渲染了新文档：强制重画，不去猜缓存。
+    source.addEventListener('browser', (event) => browserPanel.applyDocument(parseData(event.data), { force: true }));
+    // SPEC-015 SET-008 / SPEC-017：设置变更广播 settings 事件，顶栏的当前模型 chip 同步更新
+    source.addEventListener('settings', (event) => settingsPage.applyEffectiveModel(parseData(event.data)));
+  }
+
+  /** 拉一次当前对话的 `/api/state`；失败给出可见错误，绝不白屏 */
+  async function fetchState() {
+    const response = await requestJson(scoped('/api/state'), { method: 'GET' });
+    if (response === null) {
+      appendMessage(renderMessage({ kind: 'error', agent: '宿主', text: '加载对话状态失败：服务端没有响应' }));
+      return null;
+    }
+    if (response.ok !== true) {
+      appendMessage(renderMessage({ kind: 'error', agent: '宿主', text: `加载对话状态失败：HTTP ${response.status}` }));
+      return null;
+    }
+    return response.data;
+  }
+
+  /** 拉一次状态并重画（对话流 / 界面 / 浏览器 / 检查器都在 applyState 里） */
+  async function redrawAll() {
+    const snapshot = await fetchState();
+    if (snapshot === null) return false;
+    applyState(snapshot);
+    return true;
+  }
+
+  /**
+   * 切对话前把**上一个对话**留在本地的一切作废：绘制缓存、工具行、命令日志、文件列表。
+   * 其中 `state.html = '' / painted = false` 是关键——否则新旧对话内容相同时，
+   * `shouldApplySurface` 会认定「这份 html 已经画过了」，界面面板就停在旧对话上。
+   */
+  function resetConversationView() {
+    state.html = '';
+    state.pendingHtml = null;
+    state.painted = false;
+    state.tools.clear();
+    state.commandLog.length = 0;
+    setBusy({ busy: false });
+    if (dom.surface !== null && dom.surface !== undefined) dom.surface.srcdoc = '';
+    dom.messages.innerHTML = '';
+    // 浏览器文档：显式清空，绝不沿用上一个对话的内容
+    browserPanel.applyDocument(null);
+  }
+
+  /**
+   * 切换对话（CONV-006 / CONV-007）：
+   * 关旧流 → 清本地缓存 → 按新 id 开流 → `GET /api/state` 重画全部区域 → 重画文件列表。
+   * **不刷新页面**（那条路只留给人类点「刷新」横幅按钮）。
+   */
+  async function switchConversation(nextId) {
+    const id = conversationIdOf(nextId);
+    if (switching) {
+      pendingSwitch = id; // 正在切：记下来，切完再追一次
+      return;
+    }
+    if (id === activeConversation) {
+      await redrawAll();
+      return;
+    }
+
+    switching = true;
+    try {
+      let target = id;
+      for (;;) {
+        activeConversation = target;
+        closeStream(); // 旧对话的 SSE 必须关掉
+        resetConversationView();
+        switcher.setActive(target);
+        openStream();
+        workspacePanel.clear(); // 文件列表 / 内容也全部重画
+        await redrawAll();
+        // 列表本身也要刷新：新建出来的对话得出现，消息数也得跟上。
+        // （这一步要在 redrawAll 之后——那次请求会把服务端的 active 定成 target）
+        await switcher.load();
+        switcher.setActive(target);
+        await workspacePanel.reload(target);
+        if (pendingSwitch === null) break;
+        target = pendingSwitch;
+        pendingSwitch = null;
+        if (target === activeConversation) break;
+      }
+    } finally {
+      switching = false;
+      pendingSwitch = null;
+    }
+  }
+
+  /** 输入框里的 `/` 提示：只切显隐与文案，不解析命令（SPEC-020 §三） */
+  function updateCommandHint() {
+    const node = dom.commandHint;
+    if (node === null || node === undefined) return;
+    const isCommand = isCommandText(dom.input.value);
+    node.textContent = isCommand ? COMMAND_HINT_TEXT : '';
+    node.hidden = !isCommand;
+  }
+
+  /**
+   * 执行一条命令（SPEC-020 §二）：`POST /api/command` → 结果渲染成系统消息 →
+   * 按 `action` 切对话 / 重画。命令**绝不**走 `/api/message`（CMD-005）。
+   */
+  async function runCommand(text) {
+    const response = await requestJson(scoped('/api/command'), {
+      method: 'POST',
+      body: commandRequest(text),
+    });
+    if (response === null) {
+      appendMessage(renderMessage({ kind: 'error', agent: '宿主', text: `命令执行失败：服务端没有响应（${text}）` }));
+      pushTimeline({ type: 'command.failed', agent: 'human', ts: new Date().toISOString() });
+      return;
+    }
+
+    const data = isRecord(response.data) ? response.data : {};
+    const result = normalizeCommandResult(data);
+    const action = result.ok ? commandActionOf(data.action) : null;
+
+    // CMD-004：switch / created 切过去；cleared 只需重画当前对话
+    if (action !== null && (action.type === 'switch' || action.type === 'created')) {
+      await switchConversation(action.conversation);
+    } else if (action !== null && action.type === 'cleared') {
+      await redrawAll();
+    }
+
+    // 结果放在重画**之后**：`/clear` 的系统消息才不会被 state 投影冲掉
+    const html = renderCommandResult(data, text);
+    state.commandLog.push(html);
+    while (state.commandLog.length > MAX_COMMAND_LOG) state.commandLog.shift();
+    appendMessage(html);
+    pushTimeline({
+      type: `command.${result.command.length > 0 ? result.command : 'unknown'}`,
+      agent: 'human',
+      ts: new Date().toISOString(),
+    });
   }
 
   function applyFrame(payload) {
@@ -644,6 +957,8 @@ function boot() {
     const data = isRecord(payload) ? payload : {};
     // 一轮结束就必须收掉忙碌态，不等下一次 state（否则慢网络下会一直转）
     setBusy({ busy: false });
+    // 消息数变了，对话列表的「(N 条)」要跟上（失败也不影响主流程）
+    void switcher.load();
     const reason = textOf(data.reason);
     const text = reason === 'interrupted' ? '本轮已被人类中断' : reason.length > 0 ? `本轮结束：${reason}` : '本轮结束';
     appendMessage(renderMessage({ kind: 'done', agent: '系统', text }));
@@ -774,11 +1089,11 @@ function boot() {
   }
 
   /**
-   * SPEC-019：两个沙箱面板靠 tab 切换显隐，DOM 里始终并存 ——
-   * 切走不会卸载 iframe，也不会丢掉另一份文档（BROWSER-011 的「互不覆盖」）。
+   * SPEC-019 / SPEC-021：三个面板（界面 / 浏览器 / 文件）靠 tab 切换显隐，DOM 里始终并存
+   * —— 切走不会卸载 iframe，也不会丢掉另一份文档（BROWSER-011 的「互不覆盖」）。
    */
   function showPanel(name) {
-    const target = name === 'browser' ? 'browser' : 'surface';
+    const target = name === 'browser' || name === 'files' ? name : 'surface';
     for (const tab of dom.panelTabs) {
       const active = tab.getAttribute('data-panel-tab') === target;
       tab.classList.toggle('is-active', active);
@@ -787,9 +1102,12 @@ function boot() {
     for (const body of dom.panelBodies) {
       body.hidden = body.getAttribute('data-panel') !== target;
     }
-    // 浏览器页签时让上半区长大一些：一份 HTML 挤在 150px 里是没法用的
+    // 浏览器 / 文件页签时让上半区长大一些：一份 HTML 或一份文件挤在 150px 里是没法用的
     const zone = dom.panelBodies[0]?.closest('.zone');
     if (zone !== null && zone !== undefined) zone.setAttribute('data-active-panel', target);
+    // SPEC-021：打开文件页签时刷新列表（Agent 可能刚写了新文件）；
+    // 列表只请求 /api/workspace，内容仍然要等人点开才加载。
+    if (target === 'files') void workspacePanel.reload(activeConversation);
   }
 
   for (const tab of dom.panelTabs) {
@@ -805,7 +1123,7 @@ function boot() {
       empty: dom.browserEmpty,
       lastEvent: dom.browserLastEvent,
     },
-    request: requestJson,
+    request: conversationRequest, // SPEC-020：浏览器事件也落到当前对话上
     onForwarded(body) {
       // 人类在文档里点了一下：进时间线，随后服务端会把它作为人类来源的消息送达 Agent
       pushTimeline({ type: `browser.event.${body.kind}`, agent: 'browser', ts: new Date().toISOString() });
@@ -822,9 +1140,17 @@ function boot() {
   function send() {
     const text = dom.input.value.trim();
     if (text.length === 0) return;
-    appendMessage(renderMessage({ kind: 'human', agent: '人类', text }));
     dom.input.value = '';
-    void post('/api/message', { text });
+    updateCommandHint();
+
+    // SPEC-020 §二：客户端只做前缀路由——`/` 开头走命令通道，绝不发给模型（CMD-005）
+    if (isCommandText(text)) {
+      void runCommand(text);
+      return;
+    }
+
+    appendMessage(renderMessage({ kind: 'human', agent: '人类', text }));
+    void post(scoped('/api/message'), { text });
   }
   dom.composer.addEventListener('submit', (event) => {
     event.preventDefault();
@@ -838,8 +1164,11 @@ function boot() {
     }
   });
 
+  // 输入以 `/` 开头时给出可见提示（不走网络、不解析命令）
+  dom.input.addEventListener('input', updateCommandHint);
+
   dom.interrupt.addEventListener('click', () => {
-    void post('/api/interrupt', { reason: '人类夺权' });
+    void post(scoped('/api/interrupt'), { reason: '人类夺权' });
   });
 
   dom.rollback.addEventListener('click', () => {
@@ -850,7 +1179,7 @@ function boot() {
       appendMessage(renderMessage({ kind: 'error', agent: '宿主', text: `无效的版本号：${answer}` }));
       return;
     }
-    void post('/api/rollback', { version });
+    void post(scoped('/api/rollback'), { version });
   });
 
   // 横幅上的按钮用事件委托：内容每次都是重新渲染的，逐次绑定容易漏
@@ -867,24 +1196,6 @@ function boot() {
     if (action === 'refresh') reloadPage();
   });
 
-  setConnection('connecting');
-  const source = new EventSource('/api/stream');
-  source.addEventListener('open', () => setConnection('open'));
-  source.addEventListener('error', () => {
-    setConnection(source.readyState === EventSource.CLOSED ? 'closed' : 'reconnecting');
-  });
-  source.addEventListener('state', (event) => applyState(parseData(event.data)));
-  source.addEventListener('frame', (event) => applyFrame(parseData(event.data)));
-  source.addEventListener('document', (event) => applyDocument(parseData(event.data)));
-  source.addEventListener('done', (event) => applyDone(parseData(event.data)));
-  // SPEC-014：客户端源码变更（事件名含点号，必须用完整名字订阅）
-  source.addEventListener('client.changed', (event) => applyClientChange(parseData(event.data)));
-  // SPEC-019：内置浏览器文档（html 已由宿主组合好，直接进 srcdoc 的沙箱）。
-  // Agent 明确渲染了新文档：强制重画，不去猜缓存。
-  source.addEventListener('browser', (event) => browserPanel.applyDocument(parseData(event.data), { force: true }));
-  // SPEC-015 SET-008 / SPEC-017：设置变更广播 settings 事件，顶栏的当前模型 chip 同步更新
-  source.addEventListener('settings', (event) => settingsPage.applyEffectiveModel(parseData(event.data)));
-
   /**
    * SPEC-019：桥的回传入口。**只认浏览器面板 iframe 的 window**（来源校验在
    * browser.js 的 acceptBrowserEvent 里，非本 iframe / 无桥标记的消息一律丢弃）。
@@ -892,6 +1203,24 @@ function boot() {
   window.addEventListener('message', (event) => {
     browserPanel.handleMessage(event);
   });
+
+  /**
+   * SPEC-020 启动顺序：先用 `GET /api/conversations` 定下 active（服务端是权威），
+   * 再按该 id 开流、拉一次 `/api/state` 重画、加载文件列表。
+   *
+   * 老服务端没有 `/api/conversations` 时退回 `default`——语义与补齐前完全一致，
+   * 界面不会因此白屏（控制器已经把失败原因显示出来了）。
+   */
+  setConnection('connecting');
+  updateCommandHint();
+  void (async () => {
+    const list = await switcher.load();
+    activeConversation = list === null ? DEFAULT_CONVERSATION : switcher.getActive();
+    switcher.setActive(activeConversation);
+    openStream();
+    await redrawAll();
+    await workspacePanel.reload(activeConversation);
+  })();
 }
 
 /** SSE 的 data 是字符串；坏了也不能让界面停摆 */

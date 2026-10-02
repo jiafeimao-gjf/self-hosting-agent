@@ -173,6 +173,11 @@ const HOST_TOOL_DESCRIPTIONS: Record<string, string> = {
     '参数：html（必填，完整文档或片段都行）、title?、allowNetwork?（默认 false，禁止外链网络）。' +
     '文档里的交互可以回流：给元素加 data-ac-emit="事件名"，人类点击后你会收到一条「浏览器交互」消息；' +
     '文档内也能调 window.AgentClient.emit(name, payload) 主动上报。适合图表、表单、小工具这类界面文档表达不了的东西。',
+  'workspace.write':
+    '把内容写进**当前对话的工作空间**（真实落盘、跨轮次持久）。参数：path（相对路径，不能越出工作空间）、content、append?（true 表示追加）。' +
+    '适合放报告草稿、数据、配置这类要留下来的东西。',
+  'workspace.read': '读取工作空间里的一个文件。参数：path',
+  'workspace.list': '列出工作空间里的全部文件（路径 / 字节数 / 修改时间）',
   'client.list': '列出客户端自身可改的源码文件（你会看到路径、字节数、已有版本数）',
   'client.read': '读客户端自身的一个源码文件。参数：path（如 style.css / app.js）',
   'client.write':
@@ -196,6 +201,7 @@ const SYSTEM_PROMPT = [
     '人类在里面点了带 data-ac-emit 的元素，你会收到一条「浏览器交互」消息。',
   '3. 回复用中文、短句、说结论。长内容放进界面里，而不是堆在对话里。',
   '4. 只有确实需要并行干活时，才用 agent.spawn 拉起队友（这会请求人类审批）。',
+  '4b. 要留下东西（报告、数据、配置）就写进工作空间（workspace.write）——那是真的落盘，人类也能在「文件」里看到。',
   '5. 做完一件事，用一句话告诉人类你做了什么、下一步建议什么。',
 ].join('\n');
 
@@ -234,6 +240,17 @@ const HOST_TOOL_SCHEMAS: Record<string, Record<string, unknown>> = {
     },
     required: ['html'],
   },
+  'workspace.write': {
+    type: 'object',
+    properties: {
+      path: { type: 'string', description: '相对工作空间的路径，如 report.md' },
+      content: { type: 'string' },
+      append: { type: 'boolean', description: 'true 表示追加而不是覆盖' },
+    },
+    required: ['path', 'content'],
+  },
+  'workspace.read': { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] },
+  'workspace.list': { type: 'object', properties: {} },
   'client.list': { type: 'object', properties: {} },
   'client.read': {
     type: 'object',
@@ -434,6 +451,11 @@ channel.on('frame', (frame: Frame) => {
         ...(frame.kind === undefined ? {} : { kind: String(frame.kind) }),
       });
       void runOnce();
+      break;
+    }
+    case 'conversation.clear': {
+      // 与宿主同一个边界语义（projectConversation）：写一条标记，此前的对话就不再进上下文
+      log.append({ type: 'conversation.cleared', agent: agentId });
       break;
     }
     case 'browser.event': {

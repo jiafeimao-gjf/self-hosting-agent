@@ -15,6 +15,8 @@ import { EventLog } from '../eventlog/log.ts';
 import type { ApprovalGate } from '../kernel/approval.ts';
 import { DEFAULT_MODEL_SETTINGS, SettingsStore, settingsToAgentEnv } from './settings.ts';
 import type { ModelSettings, PublicSettings } from './settings.ts';
+import fs from 'node:fs';
+import { clearBoundary } from '../runtime/conversation.ts';
 import { createModelPort } from './model-factory.ts';
 import { createLogger } from '../log/logger.ts';
 import type { Logger } from '../log/logger.ts';
@@ -53,10 +55,16 @@ export interface ClientState {
   model: PublicSettings;
   /** SPEC-019：内置浏览器的当前文档（已组合、可直接进 srcdoc）；没有则为 null */
   browser: { version: number; title: string; html: string; allowNetwork: boolean } | null;
+  /** SPEC-020：这个快照属于哪个对话 */
+  conversation: { id: string; title: string };
 }
 
 export interface SessionOptions {
   dir?: string;
+  /** SPEC-020 对话 id（默认 default） */
+  id?: string;
+  /** SPEC-020 对话标题 */
+  title?: string;
   /** 模型侧环境变量，透传给 Agent 子进程（AGENT_MODEL / AGENT_BASE_URL / ...） */
   agentEnv?: Record<string, string>;
   /** 一次最多回多少条事件（默认 120） */
@@ -95,12 +103,18 @@ export class ClientSession {
   #restarting: Promise<void> = Promise.resolve();
   #closed = false;
   readonly logger: Logger;
+  /** SPEC-020：这个会话属于哪个对话 */
+  readonly id: string;
+  readonly title: string;
+  #lastActiveAt = new Date().toISOString();
 
   constructor(options: SessionOptions = {}) {
     this.dir = options.dir ?? path.join(os.tmpdir(), 'agent-client', 'client-session');
     this.#agentEnv = options.agentEnv ?? {};
     this.#lead = options.lead ?? {};
     this.#eventTail = options.eventTail ?? 120;
+    this.id = options.id ?? 'default';
+    this.title = options.title ?? (this.id === 'default' ? '默认对话' : this.id);
 
     const clientRoot =
       options.clientRoot === null
@@ -251,6 +265,7 @@ export class ClientSession {
 
   /** 人类说话 */
   send(text: string): { ok: boolean; error?: string } {
+    this.#lastActiveAt = new Date().toISOString();
     const body = text.trim();
     if (body === '') return { ok: false, error: 'EMPTY_MESSAGE' };
     this.start();
@@ -350,6 +365,7 @@ export class ClientSession {
       events,
       messages,
       sources,
+      conversation: { id: this.id, title: this.title },
       model: this.publicSettings(),
       browser:
         browserDoc === undefined
@@ -371,6 +387,95 @@ export class ClientSession {
     return projectConversation(this.runner.agentEvents('lead'));
   }
 
+  lastActiveAt(): string {
+    return this.#lastActiveAt;
+  }
+
+  /** 对话条数（对话列表用） */
+  messageCount(): number {
+    return this.#conversationMessages(1000).filter((item) => item.kind === 'human' || item.kind === 'assistant').length;
+  }
+
+  /**
+   * SPEC-020 `/clear`：写一条清空标记，并让子进程也写一条。
+   *
+   * 两边共用 `projectConversation` 的边界语义，所以宿主显示与 Agent 记忆同时清空；
+   * 磁盘上的旧日志一个字都不删（审计还在）。
+   */
+  clear(): { ok: boolean } {
+    this.runner.log.append({ type: 'conversation.cleared', conversation: this.id });
+    const lead = this.runner.pool.get('lead');
+    if (lead !== undefined) {
+      try {
+        lead.send({ t: 'conversation.clear' });
+      } catch (err) {
+        this.logger.warn('清空标记投递失败', { error: err instanceof Error ? err.message : String(err) });
+      }
+    }
+    this.#busySince = null;
+    this.#emit({ type: 'state', data: this.state() });
+    this.#emit({ type: 'done', data: { reason: 'cleared' } });
+    return { ok: true };
+  }
+
+  /** SPEC-020 `/history`：把当前可见对话导出成 Markdown */
+  exportHistory(): { ok: true; name: string; path: string; lines: number; bytes: number } {
+    const items = this.#conversationMessages(1000);
+    const stamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const name = `${stamp}.md`;
+    const dir = path.join(this.dir, 'history');
+    fs.mkdirSync(dir, { recursive: true });
+
+    const lines: string[] = [`# ${this.title}`, '', `> 对话 id：${this.id}`, `> 导出时间：${new Date().toISOString()}`, ''];
+    for (const item of items) {
+      const who = item.kind === 'human' ? '人类' : item.kind === 'assistant' ? 'Agent' : item.kind;
+      lines.push(`## ${who}`, '', item.body, '');
+    }
+    const body = lines.join('\n');
+    const abs = path.join(dir, name);
+    fs.writeFileSync(abs, body, 'utf8');
+    return { ok: true, name, path: abs, lines: lines.length, bytes: Buffer.byteLength(body, 'utf8') };
+  }
+
+  listHistory(): Array<{ name: string; bytes: number; mtime: string }> {
+    const dir = path.join(this.dir, 'history');
+    if (!fs.existsSync(dir)) return [];
+    return fs
+      .readdirSync(dir, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && entry.name.endsWith('.md'))
+      .map((entry) => {
+        const stat = fs.statSync(path.join(dir, entry.name));
+        return { name: entry.name, bytes: stat.size, mtime: stat.mtime.toISOString() };
+      })
+      .sort((a, b) => b.name.localeCompare(a.name));
+  }
+
+  readHistoryFile(
+    name: unknown,
+  ): { ok: true; name: string; bytes: number; content: string; truncated: boolean } | { ok: false; error: string } {
+    // 只接受纯文件名：历史文件目录里不该出现路径
+    if (
+      typeof name !== 'string' ||
+      name.trim() === '' ||
+      name.includes('/') ||
+      name.includes('\\') ||
+      name.includes('..')
+    ) {
+      return { ok: false, error: 'BAD_NAME' };
+    }
+    const abs = path.join(this.dir, 'history', name);
+    if (!fs.existsSync(abs)) return { ok: false, error: 'NOT_FOUND' };
+    const raw = fs.readFileSync(abs);
+    const truncated = raw.byteLength > 256 * 1024;
+    return {
+      ok: true,
+      name,
+      bytes: raw.byteLength,
+      content: (truncated ? raw.subarray(0, 256 * 1024) : raw).toString('utf8'),
+      truncated,
+    };
+  }
+
   /**
    * 对话流投影：**人类消息 + Agent 说过的话**，按时间戳归并。
    *
@@ -379,9 +484,10 @@ export class ClientSession {
    * 人类消息因为恰好在邮件日志里才活了下来。两边同源才是对的。
    */
   #conversationMessages(limit = 40): ClientState['messages'] {
-    const host = this.runner.log
-      .read()
-      .filter((event) => event.type === 'mail.message')
+    const all = this.runner.log.read();
+    const boundary = clearBoundary(all);
+    const host = all
+      .filter((event) => event.type === 'mail.message' && event.seq > boundary)
       .map((event) => ({
         from: String(event.from ?? ''),
         to: String(event.to ?? ''),
@@ -392,7 +498,7 @@ export class ClientSession {
 
     const spoken = this.runner
       .agentEvents('lead')
-      .filter((event) => event.type === 'agent.thinking')
+      .filter((event) => event.type === 'agent.thinking' && event.seq > boundary)
       .map((event) => ({
         from: 'lead',
         to: 'human',
