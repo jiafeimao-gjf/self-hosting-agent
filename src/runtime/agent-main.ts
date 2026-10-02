@@ -24,6 +24,7 @@ import { scriptedModel } from '../loop/fake-model.ts';
 import { createHttpModel } from '../loop/http-model.ts';
 import { createAnthropicModel } from '../loop/anthropic-model.ts';
 import { projectConversation } from './conversation.ts';
+import { createLogger } from '../log/logger.ts';
 
 function parseArgs(argv: string[]): Record<string, string> {
   const out: Record<string, string> = {};
@@ -134,6 +135,18 @@ const logDir = args['log-dir'] ?? path.join(os.tmpdir(), 'agent-client', 'agents
 const stepDelayMs = Number(args['step-delay'] ?? 0);
 
 const log = new EventLog({ dir: logDir });
+const logger = createLogger({ dir: path.join(logDir, 'logs'), echo: true }).child(`agent:${agentId}`);
+
+// 崩溃兜底：没有它，未捕获异常只会在 stderr 上留一段堆栈——而 stderr 以前没人看
+process.on('uncaughtException', (err) => {
+  logger.error('未捕获异常，进程退出', { message: err.message, stack: err.stack });
+  process.exit(1);
+});
+process.on('unhandledRejection', (reason) => {
+  logger.error('未处理的 Promise 拒绝', {
+    reason: reason instanceof Error ? reason.message : String(reason),
+  });
+});
 const channel = new FrameChannel({ input: process.stdin, output: process.stdout });
 
 /** 宿主工具：由 Kernel 代办（拉起进程、投递消息、落界面、改任务板） */
@@ -179,9 +192,61 @@ const SYSTEM_PROMPT = [
   '5. 做完一件事，用一句话告诉人类你做了什么、下一步建议什么。',
 ].join('\n');
 
+/** 宿主工具的参数 schema：真模型靠它填对参数，缺了它模型只能给个 {} */
+const HOST_TOOL_SCHEMAS: Record<string, Record<string, unknown>> = {
+  'ui.render': {
+    type: 'object',
+    properties: {
+      scope: { type: 'string', description: '界面区块名，如 surface.main' },
+      op: { type: 'string', enum: ['upsert', 'mount', 'replace', 'patch'], description: '默认 upsert' },
+      spec: { type: 'object', description: 'View Spec，如 {type:"panel",title:string,children:[...]}' },
+    },
+    required: ['scope', 'spec'],
+  },
+  'agent.spawn': {
+    type: 'object',
+    properties: { agentId: { type: 'string' }, brief: { type: 'string' } },
+    required: ['agentId', 'brief'],
+  },
+  'agent.send': {
+    type: 'object',
+    properties: { to: { type: 'string' }, body: { type: 'string' } },
+    required: ['to', 'body'],
+  },
+  'agent.wait': {
+    type: 'object',
+    properties: { ids: { type: 'array', items: { type: 'string' } }, timeoutMs: { type: 'number' } },
+    required: ['ids'],
+  },
+  'client.list': { type: 'object', properties: {} },
+  'client.read': {
+    type: 'object',
+    properties: { path: { type: 'string', description: '相对 src/client 的路径，如 style.css' } },
+    required: ['path'],
+  },
+  'client.write': {
+    type: 'object',
+    properties: {
+      path: { type: 'string' },
+      content: { type: 'string' },
+      reason: { type: 'string' },
+      append: { type: 'boolean' },
+    },
+    required: ['path', 'content', 'reason'],
+  },
+  'client.revert': { type: 'object', properties: { path: { type: 'string' }, version: { type: 'number' } }, required: ['path'] },
+  'task.create': {
+    type: 'object',
+    properties: { id: { type: 'string' }, subject: { type: 'string' }, writeScopes: { type: 'array', items: { type: 'string' } } },
+    required: ['subject'],
+  },
+  'task.claim': { type: 'object', properties: { id: { type: 'string' }, expectedRevision: { type: 'number' } }, required: ['id'] },
+  'task.complete': { type: 'object', properties: { id: { type: 'string' }, expectedRevision: { type: 'number' } }, required: ['id'] },
+};
+
 const tools: ToolSpec[] = [
   defineTool('budget', (toolArgs) => ({ range: toolArgs.range ?? 'today', used: 620000, limit: 1000000 }), '读取预算'),
-  ...hostToolNames.map((name) => defineHostTool(name, HOST_TOOL_DESCRIPTIONS[name])),
+  ...hostToolNames.map((name) => defineHostTool(name, HOST_TOOL_DESCRIPTIONS[name], HOST_TOOL_SCHEMAS[name])),
 ];
 
 // ── 宿主工具桥：把 tool.call 发出去，等 tool.reply 回来 ──

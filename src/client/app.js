@@ -482,15 +482,35 @@ function boot() {
     if (state.busyTimer === null) state.busyTimer = setInterval(paint, 1000);
   }
 
-  // 沙箱的首次加载完成后，把首帧期间攒下的 html 补画上（否则会被初始加载覆盖）
-  dom.surface.addEventListener('load', () => {
-    state.iframeLoaded = true;
+  /**
+   * 把待画的 html 真正写进沙箱。
+   *
+   * 为什么要"等一等"：页面刚加载时 iframe 还在跑它自己的初始 srcdoc，
+   * 这时候赋值会被那次尚未完成的加载覆盖掉（真机上就是这么丢过首帧的）。
+   */
+  function flushPendingSurface() {
     if (state.pendingHtml === null) return;
     const html = state.pendingHtml;
     state.pendingHtml = null;
+    // 主动认定"可以画了"：不能再无限等一个可能永远不来的事件
+    state.iframeLoaded = true;
     dom.surface.srcdoc = html;
     state.painted = true;
+  }
+
+  // 正常路径：沙箱首次加载完成 → 补画
+  dom.surface.addEventListener('load', () => {
+    state.iframeLoaded = true;
+    flushPendingSurface();
   });
+
+  /**
+   * 兜底路径：如果 iframe 的 load 事件在我们挂上监听**之前**就已经发生过
+   * （它可能比 boot() 还早），那 `iframeLoaded` 会永远是 false，
+   * 全部内容都堆在 pendingHtml 里永不落地 —— 界面面板就是一直空的。
+   * 所以下一帧再确认一次，不依赖"我们有没有恰好听到那个事件"。
+   */
+  requestAnimationFrame(() => flushPendingSurface());
 
   function setConnection(status) {
     dom.conn.dataset.state = status;
@@ -528,7 +548,7 @@ function boot() {
     state.html = html;
 
     if (!state.iframeLoaded) {
-      state.pendingHtml = html; // 等 load 事件来了再补
+      state.pendingHtml = html; // 先记下，等沙箱 settled 再画
       return;
     }
     dom.surface.srcdoc = html;

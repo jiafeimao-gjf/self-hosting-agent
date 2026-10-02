@@ -9,6 +9,8 @@
  *   2. 失败要响：不可信的响应一律抛导出类型的错误，绝不降级成空参数去执行工具。
  *   3. 离线可测：零第三方依赖，fetchImpl 可注入，测试用 node:http 本地假服务。
  */
+import { createWireNameMap } from './wire-names.ts';
+import type { WireNameMap } from './wire-names.ts';
 import type { ContextItem, ModelInput, ModelOutput, ModelPort, ToolCall, ToolSpec, UiPatch } from './loop.ts';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -99,10 +101,12 @@ export function createHttpModel(options: HttpModelOptions): ModelPort {
 
   return {
     async step(input: ModelInput): Promise<ModelOutput> {
-      const payload = JSON.stringify(buildBody(options, input));
+      // 一次调用内工具集合是固定的：出网/回程共用同一张名字映射
+      const names = createWireNameMap(input.tools.map((tool) => tool.name));
+      const payload = JSON.stringify(buildBody(options, input, names));
       for (let attempt = 0; ; attempt += 1) {
         try {
-          return await requestOnce(doFetch, url, options.apiKey, payload, timeoutMs, options.uiToolName);
+          return await requestOnce(doFetch, url, options.apiKey, payload, timeoutMs, options.uiToolName, names);
         } catch (err) {
           // 只有排得上号、且还有重试余额的失败才重试；其余（含 4xx、解析错误）立即上抛
           if (!(err instanceof HttpModelError) || attempt >= maxRetries || !isRetriable(err)) throw err;
@@ -122,6 +126,7 @@ async function requestOnce(
   payload: string,
   timeoutMs: number,
   uiToolName: string | undefined,
+  names: WireNameMap,
 ): Promise<ModelOutput> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -155,7 +160,7 @@ async function requestOnce(
       );
     }
 
-    return parseCompletion(raw, url, uiToolName);
+    return parseCompletion(raw, url, uiToolName, names);
   } finally {
     clearTimeout(timer);
   }
@@ -183,16 +188,19 @@ interface ChatMessage {
   tool_calls?: Array<{ id: string; type: 'function'; function: { name: string; arguments: string } }>;
 }
 
-function buildBody(options: HttpModelOptions, input: ModelInput): Record<string, unknown> {
-  const body: Record<string, unknown> = { model: options.model, messages: toMessages(input.context) };
-  const tools = toTools(input.tools);
+function buildBody(options: HttpModelOptions, input: ModelInput, names: WireNameMap): Record<string, unknown> {
+  const body: Record<string, unknown> = {
+    model: options.model,
+    messages: toMessages(input.context, names),
+  };
+  const tools = toTools(input.tools, names);
   if (tools !== undefined) body.tools = tools;
   if (options.temperature !== undefined) body.temperature = options.temperature;
   if (options.maxTokens !== undefined) body.max_tokens = options.maxTokens;
   return body;
 }
 
-function toMessages(context: ContextItem[]): ChatMessage[] {
+function toMessages(context: ContextItem[], names: WireNameMap): ChatMessage[] {
   return context.map((item) => {
     if (item.role === 'peer') {
       // 同伴消息复用 user 角色，但必须标出来源，否则模型分不清「谁在说话」
@@ -217,7 +225,8 @@ function toMessages(context: ContextItem[]): ChatMessage[] {
         tool_calls: item.toolCalls.map((call) => ({
           id: call.id,
           type: 'function',
-          function: { name: call.name, arguments: JSON.stringify(call.args ?? {}) },
+          // 助手回传的历史调用也要用线上名，与工具声明保持一致
+          function: { name: names.toWire(call.name), arguments: JSON.stringify(call.args ?? {}) },
         })),
       };
     }
@@ -225,22 +234,22 @@ function toMessages(context: ContextItem[]): ChatMessage[] {
   });
 }
 
-function toTools(tools: ToolSpec[]): Array<Record<string, unknown>> | undefined {
+function toTools(tools: ToolSpec[], names: WireNameMap): Array<Record<string, unknown>> | undefined {
   if (tools.length === 0) return undefined;
   return tools.map((tool) => ({
     type: 'function',
     function: {
-      name: tool.name,
+      name: names.toWire(tool.name),
       description: tool.description ?? '',
-      // ToolSpec 目前没有参数 schema 字段：用空对象 schema，至少让接口收得下调用
-      parameters: { type: 'object', properties: {} },
+      // 参数 schema 原样透传；没给才退回空对象 schema（那样模型只能猜参数）
+      parameters: tool.parameters ?? { type: 'object', properties: {} },
     },
   }));
 }
 
 // ── 响应解析 ──
 
-function parseCompletion(raw: string, url: string, uiToolName: string | undefined): ModelOutput {
+function parseCompletion(raw: string, url: string, uiToolName: string | undefined, names: WireNameMap): ModelOutput {
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
@@ -279,8 +288,13 @@ function parseCompletion(raw: string, url: string, uiToolName: string | undefine
     }
     const id = typeof callRecord.id === 'string' && callRecord.id !== '' ? callRecord.id : `call_${index}`;
     const args = parseArguments(typeof fn.arguments === 'string' ? fn.arguments : '', name);
-    if (uiToolName !== undefined && name === uiToolName) uiPatches.push(toUiPatch(args, name));
-    else toolCalls.push({ id, name, args });
+    // 回程把线上名改回内部名：宿主工具仍以 ui.render / agent.spawn 这些名字注册
+    const internal = names.toInternal(name) ?? name;
+    if (uiToolName !== undefined && (name === uiToolName || internal === uiToolName)) {
+      uiPatches.push(toUiPatch(args, internal));
+    } else {
+      toolCalls.push({ id, name: internal, args });
+    }
   });
 
   const output: ModelOutput = {};

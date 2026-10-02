@@ -16,6 +16,8 @@ import type { ApprovalGate } from '../kernel/approval.ts';
 import { DEFAULT_MODEL_SETTINGS, SettingsStore, settingsToAgentEnv } from './settings.ts';
 import type { ModelSettings, PublicSettings } from './settings.ts';
 import { createModelPort } from './model-factory.ts';
+import { createLogger } from '../log/logger.ts';
+import type { Logger } from '../log/logger.ts';
 import { projectConversation } from '../runtime/conversation.ts';
 import type { ContextItem } from '../loop/loop.ts';
 import type { Frame } from '../protocol/frames.ts';
@@ -59,6 +61,10 @@ export interface SessionOptions {
   selfTest?: (input: { changed: string[] }) => Promise<SelfTestResult>;
   /** 审批门（默认拒绝；`serve` 会用「人类在旁边看着」的策略） */
   approval?: ApprovalGate;
+  /** 日志级别（默认 info） */
+  logLevel?: 'debug' | 'info' | 'warn' | 'error';
+  /** 是否把日志同时打到 stderr */
+  logEcho?: boolean;
   /** 初始模型设置（命令行参数/环境变量）；持久化过的设置优先 */
   modelSettings?: Partial<ModelSettings>;
 }
@@ -78,6 +84,7 @@ export class ClientSession {
   #model: ModelSettings;
   #restarting: Promise<void> = Promise.resolve();
   #closed = false;
+  readonly logger: Logger;
 
   constructor(options: SessionOptions = {}) {
     this.dir = options.dir ?? path.join(os.tmpdir(), 'agent-client', 'client-session');
@@ -92,6 +99,19 @@ export class ClientSession {
 
     // 事件日志先建好，源码管理器与 runner 共用同一份（审计只有一个来源）
     const log = options.log ?? new EventLog({ dir: path.join(this.dir, 'events') });
+
+    // 诊断日志与事件日志分开：前者给排障，后者是领域事实
+    this.logger = createLogger({
+      dir: path.join(this.dir, 'logs'),
+      ...(options.logLevel === undefined ? {} : { level: options.logLevel }),
+      ...(options.logEcho === undefined ? {} : { echo: options.logEcho }),
+    });
+
+    // 事件日志的坏行以前只有测试会看：启动时报一次，别静默丢事件
+    const issues = log.issues();
+    if (issues.length > 0) {
+      this.logger.warn('事件日志存在损坏行，已跳过', { count: issues.length, first: issues[0] });
+    }
 
     // SPEC-015：设置持久化在会话目录；命令行给的只是「还没配过时」的初值
     this.#settingsStore = new SettingsStore({ file: path.join(this.dir, 'settings.json') });
@@ -116,6 +136,7 @@ export class ClientSession {
       dir: this.dir,
       log,
       ...(options.approval === undefined ? {} : { approval: options.approval }),
+      logger: this.logger,
       onFrame: (agentId, frame) => this.#onFrame(agentId, frame),
       ...(clientSource === undefined ? {} : { clientSource }),
       onClientChanged: (payload) => {
@@ -139,6 +160,7 @@ export class ClientSession {
     this.#started = true;
     // 优先级：设置 < 显式 agentEnv < lead 自己的 env（测试/演示可以强行指定，例如 demo 模型）
     const env = { ...settingsToAgentEnv(this.#model), ...this.#agentEnv, ...(this.#lead.env ?? {}) };
+    this.logger.info('拉起 Lead', { model: this.#model.model, protocol: this.#model.protocol });
     this.runner.spawnAgent('lead', { ...this.#lead, env });
     this.#emit({ type: 'state', data: this.state() });
   }

@@ -9,6 +9,8 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import type { ClientSession, SessionEvent } from './session.ts';
+import { silentLogger } from '../log/logger.ts';
+import type { Logger } from '../log/logger.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_CLIENT_DIR = path.resolve(HERE, '..', 'client');
@@ -30,6 +32,8 @@ export interface ServeOptions {
   port?: number;
   host?: string;
   clientDir?: string;
+  /** 诊断日志：记录每条请求与每个服务端错误 */
+  logger?: Logger;
 }
 
 export interface RunningServer {
@@ -85,11 +89,22 @@ export function resolveClientAsset(clientDir: string, urlPath: string): string |
 export function createRequestHandler(options: ServeOptions): http.RequestListener {
   const clientDir = path.resolve(options.clientDir ?? DEFAULT_CLIENT_DIR);
   const { session } = options;
+  const logger = options.logger ?? silentLogger;
 
   return (req, res) => {
     const url = new URL(req.url ?? '/', 'http://localhost');
     const route = url.pathname;
     const method = req.method ?? 'GET';
+
+    // 访问日志：以前这个服务一条请求都不记，403/404/500 外部完全不可见
+    const startedAt = Date.now();
+    res.once('finish', () => {
+      const elapsed = Date.now() - startedAt;
+      const line = { method, path: route, status: res.statusCode, ms: elapsed };
+      if (res.statusCode >= 500) logger.error('请求失败', line);
+      else if (res.statusCode >= 400) logger.warn('请求被拒', line);
+      else logger.debug('请求完成', line);
+    });
 
     if (route === '/api/state' && method === 'GET') {
       sendJson(res, 200, session.state());

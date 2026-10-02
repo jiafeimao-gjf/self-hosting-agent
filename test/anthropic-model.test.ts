@@ -479,6 +479,30 @@ test('超时用 AbortController 中止且不重试；429/5xx/网络错误退避�
   assert.equal(attempts, 2);
 });
 
+// @spec ANTH-014
+test('工具名出网必须合法：Anthropic 同样只接受 [a-zA-Z0-9_-]', async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const server = await startFakeServer((request) => {
+    seen.push(request.body as Record<string, unknown>);
+    return { json: message([{ type: 'tool_use', id: 'toolu_1', name: 'client_write', input: { path: 'style.css' } }]) };
+  });
+  try {
+    const model = createAnthropicModel(baseOptions(server));
+    const output = await model.step(
+      input([{ role: 'human', text: '换个配色' }], [{ name: 'client.write', description: '改源码' }]),
+    );
+
+    const tools = seen[0]?.tools as Array<{ name: string }>;
+    assert.deepEqual(tools.map((tool) => tool.name), ['client_write']);
+    assert.match(tools[0]?.name ?? '', /^[a-zA-Z0-9_-]{1,64}$/);
+
+    // 回程改回内部名
+    assert.deepEqual(output.toolCalls?.map((call) => call.name), ['client.write']);
+  } finally {
+    await server.close();
+  }
+});
+
 // @spec ANTH-013
 test('助手消息带 toolCalls 时输出 tool_use 块，tool_result 与之配对', async () => {
   const server = await startFakeServer(() => ({ json: message([{ type: 'text', text: '收到' }]) }));

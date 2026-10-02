@@ -17,6 +17,7 @@
 | **ANTH-011** | specs/016-anthropic-model.md | 响应不可信（响应体不是 JSON、缺少 `content` 数组、`tool_use` 缺少 `name`、`tool_use.input` 不是对象）时抛 `AnthropicModelError`（`kind: 'bad_response'`）；非 2xx 抛 `AnthropicModelError`（`kind: 'http'`）并携带 `status` 与截断后的响应片段 `bodySnippet`。 | `test/anthropic-model.test.ts` · 响应不可信抛 bad_response；非 2xx 抛带 status 与响应片段的 http 错误 |
 | **ANTH-012** | specs/016-anthropic-model.md | 超过 `timeoutMs` 时用 `AbortController` 中止请求并抛 `AnthropicModelTimeoutError`（含 `timeoutMs`，不重试）；429、5xx 与网络错误按 `maxRetries` 以 `retryBaseDelayMs * 2^n` 退避重试，用尽后抛出最后一次错误；非 429 的 4xx 不重试。 | `test/anthropic-model.test.ts` · 超时用 AbortController 中止且不重试；429/5xx/网络错误退避重试；非 429 的 4xx 不重试 |
 | **ANTH-013** | specs/016-anthropic-model.md | 助手消息带 `toolCalls` 时输出 `tool_use` 内容块（`input` 为对象），与文本块同处一条 assistant 消息，使后续 `tool_result` 的 `tool_use_id` 有对应项。 | `test/anthropic-model.test.ts` · 助手消息带 toolCalls 时输出 tool_use 块，tool_result 与之配对 |
+| **ANTH-014** | specs/016-anthropic-model.md | 工具名出网合法：与 OpenAI 侧同样只接受 `[a-zA-Z0-9_-]`，出网改名、回程还原。 | `test/anthropic-model.test.ts` · 工具名出网必须合法：Anthropic 同样只接受 [a-zA-Z0-9_-] |
 | **ARCH-001** | specs/000-architecture.md | 四层目录 `src/surface`、`src/protocol`、`src/runtime`、`src/kernel` 必须存在且各自可被独立导入。 | `test/architecture.test.ts` · 四层目录齐备，且每层都能被独立导入 |
 | **ARCH-002** | specs/000-architecture.md | 依赖方向：`src/protocol` 不 import 任何其它层；`src/surface` 不 import kernel/runtime/loop；`src/loop` 不 import kernel。 | `test/architecture.test.ts` · 依赖方向：协议层最底层，界面层拿不到系统权限，Loop 不能反向控制内核 |
 | **ARCH-003** | specs/000-architecture.md | 架构中的「一个 Agent 一个子进程」必须可被观测：Kernel 拉起的 Agent 有独立 pid，且 pid 与宿主不同。 | `test/kernel.test.ts` · spawn 拉起独立子进程：pid 与宿主不同，能读到子进程发出的帧 |
@@ -34,6 +35,14 @@
 | **CLI-010** | specs/011-client.md | 服务端可以只监听 127.0.0.1（默认），不对外暴露。 | `test/server.test.ts` · 默认只监听 127.0.0.1，不对外暴露 |
 | **CLI-011** | specs/011-client.md | `POST /api/client/revert` 让人类**不必经过 Agent** 就能把被改过的客户端源码回滚（架构底线：人类永远能一键回滚）。 | `test/server.test.ts` · POST /api/client/revert 让人类不经过 Agent 就能回滚客户端源码 |
 | **CLI-012** | specs/011-client.md | `/api/state` 的 `messages` 是**完整对话投影**（人类消息 + Agent 说过的话，按时间归并）。前端会据此整体重建对话流，只投影邮件类消息会把 Agent 的回复冲掉。 | `test/server.test.ts` · 对话投影同时包含人类消息与 Agent 说过的话（只投影邮件会冲掉回复） |
+| **DIAG-001** | specs/018-diagnostics.md | 记录器按级别过滤：低于阈值的记录既不落盘也不进 sink；每条含 `ts/level/scope/message`，可带结构化 `data`。 | `test/logging.test.ts` · 记录器按级别过滤，每条含 ts/level/scope/message 且可带结构化 data |
+| **DIAG-002** | specs/018-diagnostics.md | 记日志失败不影响主流程：目录不可写时自动退化为内存日志，调用方不抛异常。 | `test/logging.test.ts` · 记日志失败不影响主流程：目录建不出来就退化为内存日志，调用方不抛异常 |
+| **DIAG-003** | specs/018-diagnostics.md | 子进程 stderr 被消费：内容逐行写入诊断日志，且带 `agent:<id>` 标签（补之前它没有任何订阅者）。 | `test/logging.test.ts` · 子进程 stderr 被消费：逐行写进诊断日志并带 agent 标签 |
+| **DIAG-004** | specs/018-diagnostics.md | stderr 缓冲有上限：只保留尾部，长会话不会无限增长。 | `test/logging.test.ts` · stderr 缓冲有上限：只留尾部，长会话不会无限增长 |
+| **DIAG-005** | specs/018-diagnostics.md | HTTP 访问日志：每条请求记录 method / path / status / 耗时；5xx 为 error 级。 | `test/logging.test.ts` · HTTP 访问日志：记录 method/path/status/耗时，4xx 记 warn |
+| **DIAG-006** | specs/018-diagnostics.md | 崩溃兜底：父进程与子进程都注册 `uncaughtException` / `unhandledRejection`，前者记 error 级日志。 | `test/logging.test.ts` · 崩溃兜底：父子进程都注册了 uncaughtException / unhandledRejection |
+| **DIAG-007** | specs/018-diagnostics.md | 启动时上报事件日志的损坏行（`issues()` 不再只有测试在调）。 | `test/logging.test.ts` · 启动时上报事件日志的损坏行，不再静默跳过 |
+| **DIAG-008** | specs/018-diagnostics.md | 事件日志可按 `maxBytes` 轮转：超过上限把当前文件滚到 `<file>.1`，磁盘不会无限增长（默认关闭，显式开启）。 | `test/logging.test.ts` · 事件日志可按 maxBytes 轮转：滚到 .1，磁盘不会无限增长 |
 | **E2E-001** | specs/007-e2e.md | 端到端成立：Kernel 拉起 Loop 子进程，`human.message` 进去后，宿主能收到 `ui.patch`，界面文档产生新版本，并能渲染出含该面板的 HTML。 | `test/e2e.test.ts` · 端到端：子进程跑完 Loop → ui.patch → 界面文档出新版本并渲染出 HTML |
 | **E2E-002** | specs/007-e2e.md | 非法 View Spec 被 `SurfaceIngest` 拒绝：不进入界面文档（版本不前进）、留下 rejected 记录，且**界面依然可用**。 | `test/e2e.test.ts` · 非法 View Spec 被拒绝：版本不前进、有留痕、界面依然可用 |
 | **E2E-003** | specs/007-e2e.md | 回滚：连续应用多次 patch 后可回到任意历史版本，渲染结果随之回退（架构里的「可回滚的改造权」）。 | `test/e2e.test.ts` · 回滚：多次改造后可回到任意版本，渲染结果随之回退 |
@@ -109,6 +118,8 @@
 | **MODEL-016** | specs/009-http-model.md | 非 429 的 4xx 不重试：只发一次请求即抛错。 | `test/http-model.test.ts` · 非 429 的 4xx 不重试，只发一次请求就抛错 |
 | **MODEL-017** | specs/009-http-model.md | 响应结构不可信（响应体不是 JSON、缺少 `choices[0]`、工具调用缺少 `function.name`）时抛 `HttpModelError`（`kind: 'bad_response'`）。 | `test/http-model.test.ts` · 响应结构不可信（非 JSON / 缺 choices / 工具调用缺 name）抛 bad_response |
 | **MODEL-018** | specs/009-http-model.md | 助手消息带 `toolCalls` 时输出 `tool_calls`（`arguments` 为 JSON 串），使后续 `role:'tool'` 消息的 `tool_call_id` 有对应项——否则严格端点直接 400。 | `test/http-model.test.ts` · 助手消息带 toolCalls 时输出 tool_calls，后面的工具结果才对得上 id |
+| **MODEL-019** | specs/009-http-model.md | 工具名出网合法：内网名可含点（`ui.render`），但发给端点前必须压成 `^[a-zA-Z0-9_-]{1,64}$`，回程再映射回内部名；两个内部名压成同一个线上名时必须当场报错，不许猜。 | `test/http-model.test.ts` · 工具名出网必须合法：带点的内部名压成下划线，回程再改回来<br>`test/http-model.test.ts` · 线上名冲突必须当场报错，不许猜 |
+| **MODEL-020** | specs/009-http-model.md | 参数 schema 透传：`ToolSpec.parameters` 原样作为 `function.parameters` 发出，缺省才退回空对象 schema（空 schema 的后果是模型只能给个 `{}`）。 | `test/http-model.test.ts` · 参数 schema 原样透传；没给才退回空 schema |
 | **ORCH-001** | specs/010-orchestration.md | Lead 通过 `agent.spawn` 拉起 Teammate，两者 pid 不同，且事件日志里能还原出这次派发。 | `test/orchestration.test.ts` · Lead 通过 agent.spawn 拉起 Teammate：两者 pid 不同，日志可还原派发 |
 | **ORCH-002** | specs/010-orchestration.md | 跨进程协作闭环：Teammate 领取并完成任务 → 回报 Lead → Lead 收到后继续（上下文里能看到回报）。 | `test/orchestration.test.ts` · 跨进程协作闭环：Teammate 领任务并完成，Lead 收到回报后继续 |
 | **ORCH-003** | specs/010-orchestration.md | 子 Agent 完成时由 Kernel 自动向父 Agent 回报，`agent.wait` 因此能确定性地返回。 | `test/orchestration.test.ts` · 子 Agent 完成时由 Kernel 自动回报父 Agent，agent.wait 因此能确定性返回 |
@@ -197,7 +208,7 @@
 
 ## 统计
 
-- 验收标准：**190** 条
-- 已覆盖：**190** 条
+- 验收标准：**201** 条
+- 已覆盖：**201** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

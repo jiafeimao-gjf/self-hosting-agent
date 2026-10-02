@@ -8,16 +8,30 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **190** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **190 / 190** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **189** 个，全绿（约 8s，零第三方依赖） |
+| 验收标准 | **201** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **201 / 201** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **201** 个，全绿（约 8s，零第三方依赖） |
 | 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
 | P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
 | P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
 | P2 已落地 | **可用客户端**：HTTP + SSE 服务、浏览器 Surface（对话 / 沙箱界面面板 / 检查器）、事件日志投影的多轮记忆、本机 Ollama 直连 |
 | P3 已落地 | **客户端自举**：Agent 可改 `src/client/**` 自身源码，写入前跑项目自检、不过自动回滚，带版本历史 / 可读 diff / 一键回滚 / 审计，CSS 变更无刷新热替换 |
+| P5 已落地 | **诊断日志 + 真模型跑通**：logger（级别/JSONL/子进程 stderr 收口/崩溃兜底/访问日志/事件日志轮转）；工具名线上合法化与参数 schema 透传——这两条修完，真 DeepSeek 端点才真正画出界面 |
 | P4 已落地 | **设置页 + 可自配模型**：浏览器里切换 OpenAI 兼容 / Anthropic 两种协议，填 Base URL / 模型 / Key / 温度 / 超时，四个预设、连接测试、保存即生效（Lead 重启且历史不丢）；Key 打码、永不回显 |
 | 尚未落地 | Electron/Tauri 外壳、人类审批 UI（当前人类在场即自动放行但全程留痕）、更细粒度的热更新（HMR） |
+
+## 排障：日志在哪、看什么
+
+```bash
+ls .agent-client/<run>/logs/app.log      # 结构化 JSONL：ts / level / scope / message / data
+npm run serve -- --log-level debug --log-echo true   # 同时打到终端
+```
+
+与事件日志分工明确：`events/events.jsonl` 是**领域事实**（谁改了什么、界面 = f(事件日志)，用于回放审计），
+`logs/app.log` 是**排障证据**（进程为什么崩、端点连没连上、帧为什么发不出去）。
+
+补它之前，子进程 stderr 上的那些话（模型端口、夺权、发包失败）**收进了内存却没有任何订阅者**——
+出问题时最该看的东西恰好被丢掉了。
 
 ## 设置页：模型自己配，两种协议
 

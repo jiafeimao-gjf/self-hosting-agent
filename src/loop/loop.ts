@@ -56,6 +56,11 @@ export interface ToolSpec {
    * Loop 发 tool.call 请宿主代办，宿主用 tool.reply 回填。
    */
   execute?: ToolExecution;
+  /**
+   * JSON Schema 形式的参数说明。
+   * 真模型只能靠它知道该填什么——空 schema 的结果就是模型调 `ui.render` 时给个 `{}`。
+   */
+  parameters?: Record<string, unknown>;
   run?(args: Record<string, unknown>, context: ToolContext): Promise<unknown> | unknown;
 }
 
@@ -157,12 +162,28 @@ export function defineTool(
   name: string,
   run: (args: Record<string, unknown>, context: ToolContext) => Promise<unknown> | unknown,
   description?: string,
+  parameters?: Record<string, unknown>,
 ): ToolSpec {
-  return description === undefined ? { name, run, execute: 'loop' } : { name, description, run, execute: 'loop' };
+  return {
+    name,
+    run,
+    execute: 'loop',
+    ...(description === undefined ? {} : { description }),
+    ...(parameters === undefined ? {} : { parameters }),
+  };
 }
 
-export function defineHostTool(name: string, description?: string): ToolSpec {
-  return description === undefined ? { name, execute: 'host' } : { name, description, execute: 'host' };
+export function defineHostTool(
+  name: string,
+  description?: string,
+  parameters?: Record<string, unknown>,
+): ToolSpec {
+  return {
+    name,
+    execute: 'host',
+    ...(description === undefined ? {} : { description }),
+    ...(parameters === undefined ? {} : { parameters }),
+  };
 }
 
 /** 上下文裁剪：系统提示永远保留，其余保留最近的（LOOP-010） */

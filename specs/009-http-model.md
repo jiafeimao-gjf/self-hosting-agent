@@ -116,3 +116,5 @@ createHttpModel(options: HttpModelOptions): ModelPort
 - **MODEL-016** 非 429 的 4xx 不重试：只发一次请求即抛错。
 - **MODEL-017** 响应结构不可信（响应体不是 JSON、缺少 `choices[0]`、工具调用缺少 `function.name`）时抛 `HttpModelError`（`kind: 'bad_response'`）。
 - **MODEL-018** 助手消息带 `toolCalls` 时输出 `tool_calls`（`arguments` 为 JSON 串），使后续 `role:'tool'` 消息的 `tool_call_id` 有对应项——否则严格端点直接 400。
+- **MODEL-019** 工具名出网合法：内网名可含点（`ui.render`），但发给端点前必须压成 `^[a-zA-Z0-9_-]{1,64}$`，回程再映射回内部名；两个内部名压成同一个线上名时必须当场报错，不许猜。
+- **MODEL-020** 参数 schema 透传：`ToolSpec.parameters` 原样作为 `function.parameters` 发出，缺省才退回空对象 schema（空 schema 的后果是模型只能给个 `{}`）。

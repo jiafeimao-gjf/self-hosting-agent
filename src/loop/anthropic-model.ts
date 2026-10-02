@@ -12,6 +12,8 @@
  *   2. 失败要响：不可信的响应一律抛导出类型的错误，绝不降级成空参数去执行工具。
  *   3. 离线可测：零第三方依赖，fetchImpl 可注入，测试用 node:http 本地假服务。
  */
+import { createWireNameMap } from './wire-names.ts';
+import type { WireNameMap } from './wire-names.ts';
 import type { ContextItem, ModelInput, ModelOutput, ModelPort, ToolCall, ToolSpec } from './loop.ts';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
@@ -97,10 +99,12 @@ export function createAnthropicModel(options: AnthropicModelOptions): ModelPort 
 
   return {
     async step(input: ModelInput): Promise<ModelOutput> {
-      const payload = JSON.stringify(buildBody(options, input));
+      // 工具名出网前必须压成 [a-zA-Z0-9_-]（Anthropic 同样拒绝点号）
+      const names = createWireNameMap(input.tools.map((tool) => tool.name));
+      const payload = JSON.stringify(buildBody(options, input, names));
       for (let attempt = 0; ; attempt += 1) {
         try {
-          return await requestOnce(doFetch, url, options, payload, timeoutMs);
+          return await requestOnce(doFetch, url, options, payload, timeoutMs, names);
         } catch (err) {
           // 只有排得上号、且还有重试余额的失败才重试；其余（含 4xx、解析错误）立即上抛
           if (!(err instanceof AnthropicModelError) || attempt >= maxRetries || !isRetriable(err)) throw err;
@@ -119,6 +123,7 @@ async function requestOnce(
   options: AnthropicModelOptions,
   payload: string,
   timeoutMs: number,
+  names: WireNameMap,
 ): Promise<ModelOutput> {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
@@ -156,7 +161,7 @@ async function requestOnce(
       );
     }
 
-    return parseMessage(raw, url);
+    return parseMessage(raw, url, names);
   } finally {
     clearTimeout(timer);
   }
@@ -203,8 +208,8 @@ interface AnthropicMessage {
   content: AnthropicBlock[];
 }
 
-function buildBody(options: AnthropicModelOptions, input: ModelInput): Record<string, unknown> {
-  const { system, messages } = toMessages(input.context);
+function buildBody(options: AnthropicModelOptions, input: ModelInput, names: WireNameMap): Record<string, unknown> {
+  const { system, messages } = toMessages(input.context, names);
   const body: Record<string, unknown> = {
     model: options.model,
     // Anthropic 必填：即便调用方没给，也要发一个合理值，否则请求必然 400
@@ -212,13 +217,13 @@ function buildBody(options: AnthropicModelOptions, input: ModelInput): Record<st
     messages,
   };
   if (system !== undefined) body.system = system;
-  const tools = toTools(input.tools);
+  const tools = toTools(input.tools, names);
   if (tools !== undefined) body.tools = tools;
   if (options.temperature !== undefined) body.temperature = options.temperature;
   return body;
 }
 
-function toMessages(context: ContextItem[]): { system: string | undefined; messages: AnthropicMessage[] } {
+function toMessages(context: ContextItem[], names: WireNameMap): { system: string | undefined; messages: AnthropicMessage[] } {
   const systems: string[] = [];
   const messages: AnthropicMessage[] = [];
 
@@ -254,7 +259,7 @@ function toMessages(context: ContextItem[]): { system: string | undefined; messa
         push('assistant', {
           type: 'tool_use',
           id: call.id,
-          name: call.name,
+          name: names.toWire(call.name),
           input: call.args ?? {},
         });
       }
@@ -277,19 +282,19 @@ function toMessages(context: ContextItem[]): { system: string | undefined; messa
   return { system: systems.length === 0 ? undefined : systems.join('\n\n'), messages };
 }
 
-function toTools(tools: ToolSpec[]): Array<Record<string, unknown>> | undefined {
+function toTools(tools: ToolSpec[], names: WireNameMap): Array<Record<string, unknown>> | undefined {
   if (tools.length === 0) return undefined;
   return tools.map((tool) => ({
-    name: tool.name,
+    name: names.toWire(tool.name),
     description: tool.description ?? '',
-    // ToolSpec 目前没有参数 schema 字段：用空对象 schema，至少让接口收得下调用
-    input_schema: { type: 'object', properties: {} },
+    // 参数 schema 原样透传；没给才退回空对象 schema（那样模型只能猜参数）
+    input_schema: tool.parameters ?? { type: 'object', properties: {} },
   }));
 }
 
 // ── 响应解析 ──
 
-function parseMessage(raw: string, url: string): ModelOutput {
+function parseMessage(raw: string, url: string, names: WireNameMap): ModelOutput {
   let payload: unknown;
   try {
     payload = JSON.parse(raw);
@@ -330,7 +335,8 @@ function parseMessage(raw: string, url: string): ModelOutput {
       throw badResponse(`Anthropic 模型返回的 tool_use.input 必须是对象（content[${index}]）`, raw);
     }
     // input 已经是对象：不做 JSON.parse，直接交给 Loop
-    toolCalls.push({ id, name, args: (input ?? {}) as Record<string, unknown> });
+    // 回程把线上名改回内部名：宿主工具仍以 ui.render / agent.spawn 这些名字注册
+    toolCalls.push({ id, name: names.toInternal(name) ?? name, args: (input ?? {}) as Record<string, unknown> });
   });
 
   const output: ModelOutput = {};

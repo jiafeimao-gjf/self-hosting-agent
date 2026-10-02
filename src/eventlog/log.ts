@@ -60,7 +60,10 @@ export class EventLog implements EventAppender {
   #issues: LogIssue[] = [];
   #cache: LoggedEvent[] | undefined;
 
-  constructor(options: { dir: string }) {
+  #maxBytes: number | undefined;
+
+  constructor(options: { dir: string; maxBytes?: number }) {
+    this.#maxBytes = options.maxBytes;
     this.#dir = options.dir;
     this.#file = path.join(options.dir, 'events.jsonl');
     this.#snapshotDir = path.join(options.dir, 'snapshots');
@@ -101,6 +104,7 @@ export class EventLog implements EventAppender {
     };
 
     try {
+      this.#rotateIfNeeded();
       fs.appendFileSync(this.#file, JSON.stringify(logged) + '\n', 'utf8');
     } catch (err) {
       return {
@@ -168,6 +172,21 @@ export class EventLog implements EventAppender {
       state = reducer(state, event);
     }
     return state;
+  }
+
+  /**
+   * 超过上限就把当前文件滚到 `<file>.1`（只保留一代）。
+   *
+   * 取舍写清楚：轮转后 `read()` 只覆盖当前文件，更早的事件仍在 `.1` 里可查，
+   * 但不参与 replay —— 用「可回放的完整性」换「磁盘不会无限增长」。
+   * 默认不开启（maxBytes 未配置），需要长时间运行时显式打开。
+   */
+  #rotateIfNeeded(): void {
+    if (this.#maxBytes === undefined || !fs.existsSync(this.#file)) return;
+    const size = fs.statSync(this.#file).size;
+    if (size < this.#maxBytes) return;
+    fs.renameSync(this.#file, `${this.#file}.1`);
+    this.#cache = undefined;
   }
 
   #parseFile(): LoggedEvent[] {

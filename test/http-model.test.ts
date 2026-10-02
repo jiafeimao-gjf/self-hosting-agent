@@ -1,3 +1,4 @@
+import { WIRE_NAME_PATTERN, createWireNameMap, toWireName } from '../src/loop/wire-names.ts';
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import http from 'node:http';
@@ -493,6 +494,78 @@ test('响应结构不可信（非 JSON / 缺 choices / 工具调用缺 name）�
   } finally {
     await server.close();
   }
+});
+
+// @spec MODEL-020
+test('参数 schema 原样透传；没给才退回空 schema', async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const server = await startFakeServer((request) => {
+    seen.push(request.body as Record<string, unknown>);
+    return { json: completion({ content: 'ok' }) };
+  });
+  try {
+    const model = createHttpModel(baseOptions(server));
+    const schema = {
+      type: 'object',
+      properties: { scope: { type: 'string' }, spec: { type: 'object' } },
+      required: ['scope', 'spec'],
+    };
+    await model.step(
+      input([{ role: 'human', text: '画界面' }], [
+        { name: 'ui.render', description: '画界面', parameters: schema },
+        { name: 'budget', description: '没给 schema 的工具' },
+      ]),
+    );
+
+    const tools = seen[0]?.tools as Array<{ function: { name: string; parameters: unknown } }>;
+    assert.deepEqual(tools[0]?.function.parameters, schema, '给了 schema 就必须原样透传，否则模型只能给个 {}');
+    assert.deepEqual(tools[1]?.function.parameters, { type: 'object', properties: {} }, '没给才退回空 schema');
+  } finally {
+    await server.close();
+  }
+});
+
+// @spec MODEL-019
+test('工具名出网必须合法：带点的内部名压成下划线，回程再改回来', async () => {
+  const seen: Array<Record<string, unknown>> = [];
+  const server = await startFakeServer((request) => {
+    seen.push(request.body as Record<string, unknown>);
+    return { json: completion({ tool_calls: [toolCall('call_1', 'ui_render', '{"scope":"surface.main"}')] }) };
+  });
+  try {
+    const model = createHttpModel(baseOptions(server));
+    const output = await model.step(
+      input([{ role: 'human', text: '画个界面' }], [
+        { name: 'ui.render', description: '画界面' },
+        { name: 'agent.spawn', description: '拉起队友' },
+      ]),
+    );
+
+    // 出网：必须匹配 ^[a-zA-Z0-9_-]+$，否则真实端点直接 400
+    const tools = seen[0]?.tools as Array<{ function: { name: string } }>;
+    const wireNames = tools.map((tool) => tool.function.name);
+    assert.deepEqual(wireNames, ['ui_render', 'agent_spawn']);
+    for (const name of wireNames) {
+      assert.match(name, /^[a-zA-Z0-9_-]{1,64}$/, `${name} 不是合法的线上工具名`);
+    }
+
+    // 回程：模型报出线上名，Loop 侧仍要看到内部名，否则找不到工具
+    assert.deepEqual(output.toolCalls?.map((call) => call.name), ['ui.render']);
+    assert.deepEqual(output.toolCalls?.[0]?.args, { scope: 'surface.main' });
+  } finally {
+    await server.close();
+  }
+});
+
+// @spec MODEL-019
+test('线上名冲突必须当场报错，不许猜', () => {
+  assert.throws(
+    () => createWireNameMap(['a.b', 'a_b']),
+    /工具名冲突/,
+    '两个内部名压成同一个线上名时无法判断模型调的是谁',
+  );
+  assert.equal(toWireName('client.write'), 'client_write');
+  assert.equal(WIRE_NAME_PATTERN.test(toWireName('ui.render')), true);
 });
 
 // @spec MODEL-018

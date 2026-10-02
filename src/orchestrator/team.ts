@@ -23,6 +23,8 @@ import { SurfaceIngest } from '../surface/ingest.ts';
 import type { Frame } from '../protocol/frames.ts';
 import { HOST_TOOL_NAMES, createHostTools } from './host-tools.ts';
 import type { ClientChangedPayload, HostRuntime, HostTool } from './host-tools.ts';
+import { silentLogger } from '../log/logger.ts';
+import type { Logger } from '../log/logger.ts';
 import type { ClientSource } from './client-source.ts';
 
 const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
@@ -43,6 +45,8 @@ export interface TeamRunnerOptions {
   clientSource?: ClientSource;
   /** 客户端源码被改动时通知宿主（浏览器据此热更新） */
   onClientChanged?: (payload: ClientChangedPayload) => void;
+  /** 诊断日志：子进程 stderr、进程起停都记它 */
+  logger?: Logger;
 }
 
 export interface SpawnAgentOptions {
@@ -90,7 +94,11 @@ export class TeamRunner implements HostRuntime {
     this.ingest = new SurfaceIngest({ document: this.document });
     this.board = options.board ?? new TaskBoard();
     this.mailbox = options.mailbox ?? new Mailbox({ dir: path.join(this.dir, 'mailbox') });
-    this.pool = new AgentPool({ log: this.log, logRoot: path.join(this.dir, 'agents') });
+    this.pool = new AgentPool({
+      log: this.log,
+      logRoot: path.join(this.dir, 'agents'),
+      logger: (options.logger ?? silentLogger).child('pool'),
+    });
     this.#tools = createHostTools();
     this.#scripts = options.scripts ?? {};
     this.#onFrameHook = options.onFrame;

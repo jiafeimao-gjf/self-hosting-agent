@@ -271,8 +271,22 @@ async function runServe(argv: string[]): Promise<number> {
     agentEnv,
     modelSettings,
     approval: new ApprovalGate({ policy: () => 'allow_once' }),
+    logEcho: args['log-echo'] === 'true' || process.env.AGENT_LOG_ECHO === '1',
+    ...(args['log-level'] === undefined ? {} : { logLevel: args['log-level'] as 'debug' | 'info' | 'warn' | 'error' }),
   });
-  const server = await startServer({ session, port });
+
+  // 宿主崩溃兜底：不留一段没人看的堆栈
+  process.on('uncaughtException', (err) => {
+    session.logger.error('宿主未捕获异常', { message: err.message, stack: err.stack });
+    process.exit(1);
+  });
+  process.on('unhandledRejection', (reason) => {
+    session.logger.error('宿主未处理的 Promise 拒绝', {
+      reason: reason instanceof Error ? reason.message : String(reason),
+    });
+  });
+
+  const server = await startServer({ session, port, logger: session.logger.child('http') });
 
   console.log('Agent Client · 可用态\n');
   console.log(`  打开：${server.url}`);
@@ -280,6 +294,8 @@ async function runServe(argv: string[]): Promise<number> {
   console.log(`  数据：${dir}`);
   console.log(`  可改源码：${session.clientSource?.root ?? '（未启用自举）'}`);
   console.log(`  设置页：顶栏「设置」——支持 OpenAI 兼容与 Anthropic 两种协议`);
+  console.log(`  日志：${session.logger.file() ?? '（未开启文件日志）'}`);
+  console.log('  排障：npm run serve -- --log-level debug --log-echo true（同时打到终端）');
   console.log('  审批：人类在场 → 自动放行，但每次动作都写进事件日志（审批 UI 属下一阶段）');
   console.log('\n  在页面里说话，Agent 会一边回你，一边把它自己的界面改给你看。');
   console.log('  试试说「换个配色」——它会去改自己的 style.css，自检通过后界面当场变色。Ctrl+C 退出。\n');

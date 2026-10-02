@@ -327,11 +327,13 @@ test('首帧不会被吞：没画上就必须再画，document 事件强制重�
   // Agent 明确改了界面 → 强制重画
   assert.equal(shouldApplySurface({ nextHtml: '<p>a</p>', prevHtml: '<p>a</p>', painted: true, force: true }), true);
 
-  // 客户端必须等 iframe 首次加载完成后再补画
+  // 客户端必须等 iframe 首次加载完成后再补画，**并且**不能只依赖那个事件：
+  // 如果 load 在挂监听之前就发生过，pendingHtml 会永远落不了地（面板一直空）。
   const appSource = readClient('app.js');
   assert.match(appSource, /addEventListener\('load'/);
   assert.match(appSource, /pendingHtml/);
   assert.match(appSource, /iframeLoaded/);
+  assert.match(appSource, /requestAnimationFrame\(\(\) => flushPendingSurface\(\)\)/, '必须有错过 load 事件时的兜底补画');
 });
 
 // @spec UI-008

@@ -15,6 +15,8 @@ import { FrameChannel } from '../protocol/channel.ts';
 import { ProtocolError, decodeFrame } from '../protocol/frames.ts';
 import type { Frame } from '../protocol/frames.ts';
 import type { EventAppender } from '../eventlog/log.ts';
+import { silentLogger } from '../log/logger.ts';
+import type { Logger } from '../log/logger.ts';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 export const DEFAULT_ENTRY = path.resolve(HERE, '..', 'runtime', 'agent-main.ts');
@@ -55,8 +57,16 @@ export class AgentProcess extends EventEmitter {
   #exited: Promise<ExitInfo>;
   #alive = true;
   #stderr = '';
+  /** stderr 只保留尾部：它是排障线索，不是无限大的账单 */
+  static readonly STDERR_KEEP_BYTES = 64 * 1024;
 
-  constructor(options: { agentId: string; child: ChildProcess; logDir: string; log?: EventAppender }) {
+  constructor(options: {
+    agentId: string;
+    child: ChildProcess;
+    logDir: string;
+    log?: EventAppender;
+    logger?: Logger;
+  }) {
     super();
     this.agentId = options.agentId;
     this.child = options.child;
@@ -79,9 +89,23 @@ export class AgentProcess extends EventEmitter {
 
     const stderr = options.child.stderr;
     if (stderr) {
+      const childLogger = (options.logger ?? silentLogger).child(`agent:${options.agentId}`);
       stderr.on('data', (chunk: Buffer) => {
         const text = chunk.toString('utf8');
+
+        // 只保尾部：`+=` 到天荒地老是内存泄漏，不是日志
         this.#stderr += text;
+        if (this.#stderr.length > AgentProcess.STDERR_KEEP_BYTES) {
+          this.#stderr = this.#stderr.slice(-AgentProcess.STDERR_KEEP_BYTES);
+        }
+
+        // 关键：子进程的诊断（模型端口、夺权、发包失败）以前**没人消费**，
+        // 现在逐行落进诊断日志，排障时看得到。
+        for (const line of text.split('\n')) {
+          const trimmed = line.trim();
+          if (trimmed !== '') childLogger.warn(trimmed);
+        }
+
         this.emit('stderr', text);
       });
     }
@@ -147,10 +171,12 @@ export class AgentPool {
   #agents = new Map<string, AgentProcess>();
   #log: EventAppender | undefined;
   #logRoot: string;
+  #logger: Logger;
 
-  constructor(options: { log?: EventAppender; logRoot?: string } = {}) {
+  constructor(options: { log?: EventAppender; logRoot?: string; logger?: Logger } = {}) {
     this.#log = options.log;
     this.#logRoot = options.logRoot ?? DEFAULT_LOG_ROOT;
+    this.#logger = options.logger ?? silentLogger;
   }
 
   list(): AgentProcess[] {
@@ -184,9 +210,16 @@ export class AgentPool {
       stdio: ['pipe', 'pipe', 'pipe'],
     });
 
-    const handle = new AgentProcess({ agentId: options.agentId, child, logDir, log: this.#log });
+    const handle = new AgentProcess({
+      agentId: options.agentId,
+      child,
+      logDir,
+      log: this.#log,
+      logger: this.#logger,
+    });
     this.#agents.set(options.agentId, handle);
     this.#log?.append({ type: 'agent.spawn', agent: options.agentId, pid: handle.pid, entry, logDir });
+    this.#logger.info('拉起 Agent 子进程', { agent: options.agentId, pid: handle.pid, entry });
 
     handle.exited.then(() => {
       if (this.#agents.get(options.agentId) === handle) this.#agents.delete(options.agentId);
