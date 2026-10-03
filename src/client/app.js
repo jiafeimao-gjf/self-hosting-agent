@@ -6,7 +6,9 @@
  * iframe 的 postMessage → `POST /api/browser/event`）；
  * SPEC-020 补上多对话与 `/` 命令的接线（切换器、`?conversation=<id>`、切换即重开 SSE
  * 并重画全部区域、`/` 前缀路由到 `/api/command`、命令结果渲染成系统消息）；
- * SPEC-021 补上「文件」页签的接线（列表只来自 `/api/workspace`，内容点击时动态加载）。
+ * SPEC-021 补上「文件」页签的接线（列表只来自 `/api/workspace`，内容点击时动态加载）；
+ * SPEC-023 §三补上审批对话框的接线（SSE `approval` 事件 / `/api/state.approval` 字段 /
+ * 人类点击后 `POST /api/approval?conversation=<id>`；纯逻辑与 DOM 在 `approval.js`）。
  *
  * 分工：
  *
@@ -23,6 +25,7 @@
  * 三个沙箱面板（`#surface` / `#browser` / 文件）并存，互不覆盖。
  */
 
+import { createApprovalDialog } from './approval.js';
 import { createBrowserPanel } from './browser.js';
 import {
   COMMAND_HINT_TEXT,
@@ -74,6 +77,8 @@ export function toneOfEvent(type) {
   const name = typeof type === 'string' ? type : '';
   if (name.includes('error') || name.includes('exit') || name.includes('fail')) return 'danger';
   if (name.startsWith('client.')) return 'info'; // SPEC-014：客户端源码变更
+  // SPEC-023：审批——请求待批 / 被拒绝都是需要人注意的事
+  if (name.startsWith('approval.')) return 'warning';
   // SPEC-019：浏览器面板的事件（browser.event.*）与界面/自举变更同色
   if (name.startsWith('ui.') || name.startsWith('surface') || name.startsWith('browser')) return 'info';
   if (name.startsWith('tool.') || name.startsWith('host.tool')) return 'warning';
@@ -500,6 +505,16 @@ function boot() {
     fileEmpty: document.getElementById('file-empty'),
     fileStatus: document.getElementById('file-status'),
     fileContent: document.getElementById('file-content'),
+    // SPEC-023 §三：审批对话框（完整命令原文只进 #approval-detail 的 textContent）
+    approval: document.getElementById('approval'),
+    approvalDetail: document.getElementById('approval-detail'),
+    approvalRisk: document.getElementById('approval-risk'),
+    approvalAgent: document.getElementById('approval-agent'),
+    approvalAction: document.getElementById('approval-action'),
+    approvalError: document.getElementById('approval-error'),
+    approvalDeny: document.getElementById('approval-deny'),
+    approvalOnce: document.getElementById('approval-once'),
+    approvalAlways: document.getElementById('approval-always'),
   };
 
   const state = {
@@ -733,6 +748,10 @@ function boot() {
     // 老服务端 / 别的快照不该把 SSE 刚送来的浏览器文档清空。
     browserPanel.applyState(raw);
 
+    // SPEC-023 §三：/api/state 的 approval 字段。刷新页面后仍要能看到待批条目并回复；
+    // 没有这个字段（老服务端）时保持现状，不误清掉 SSE 刚送来的那条。
+    approvalPanel.applyState(raw);
+
     dom.agents.innerHTML = snapshot.agents.map(renderAgentRow).join('') || '<div class="empty">暂无 Agent</div>';
     dom.tasks.innerHTML = snapshot.tasks.map(renderTaskRow).join('') || '<div class="empty">暂无任务</div>';
 
@@ -801,6 +820,8 @@ function boot() {
     source.addEventListener('browser', (event) => browserPanel.applyDocument(parseData(event.data), { force: true }));
     // SPEC-015 SET-008 / SPEC-017：设置变更广播 settings 事件，顶栏的当前模型 chip 同步更新
     source.addEventListener('settings', (event) => settingsPage.applyEffectiveModel(parseData(event.data)));
+    // SPEC-023 §三：Agent 请求执行命令（detail 是完整命令原文，由人类点击决定）
+    source.addEventListener('approval', (event) => approvalPanel.apply(parseData(event.data)));
   }
 
   /** 拉一次当前对话的 `/api/state`；失败给出可见错误，绝不白屏 */
@@ -841,6 +862,8 @@ function boot() {
     dom.messages.innerHTML = '';
     // 浏览器文档：显式清空，绝不沿用上一个对话的内容
     browserPanel.applyDocument(null);
+    // SPEC-023：审批也是按对话隔离的，切走的待批条目不能留在屏幕上
+    approvalPanel.close();
   }
 
   /**
@@ -1256,6 +1279,45 @@ function boot() {
 
   // 顶栏模型 chip 先按服务端的已存设置显示（拿不到就退化为 SPEC-015 的默认值）
   void settingsPage.load();
+
+  /**
+   * SPEC-023 §三：审批对话框。纯逻辑 / 归一化 / 决策校验都在 approval.js，
+   * 这里只接线——**人类点按钮**才会走到 `POST /api/approval`，且回复必须带当前对话
+   * （宿主按对话隔离审批，SPEC-020 §一）。
+   */
+  const approvalPanel = createApprovalDialog({
+    nodes: {
+      root: dom.approval,
+      detail: dom.approvalDetail,
+      risk: dom.approvalRisk,
+      agent: dom.approvalAgent,
+      action: dom.approvalAction,
+      error: dom.approvalError,
+      deny: dom.approvalDeny,
+      allowOnce: dom.approvalOnce,
+      allowAlways: dom.approvalAlways,
+    },
+    // `conversationRequest` = requestJson(scoped(path))：审批回复跟着当前对话走
+    request: conversationRequest,
+    onAsked(view) {
+      pushTimeline({
+        type: 'approval.asked',
+        agent: view.agent.length > 0 ? view.agent : 'host',
+        ts: new Date().toISOString(),
+      });
+    },
+    onDecided(decision, request) {
+      pushTimeline({
+        type: `approval.${decision}`,
+        agent: request.agent.length > 0 ? request.agent : 'human',
+        ts: new Date().toISOString(),
+      });
+    },
+    onError(text) {
+      appendMessage(renderMessage({ kind: 'error', agent: '宿主', text }));
+      pushTimeline({ type: 'approval.failed', agent: 'host', ts: new Date().toISOString() });
+    },
+  });
 
   function send() {
     const text = dom.input.value.trim();

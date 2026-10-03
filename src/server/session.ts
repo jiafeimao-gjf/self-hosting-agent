@@ -12,7 +12,9 @@ import type { SpawnAgentOptions } from '../orchestrator/team.ts';
 import { ClientSource } from '../orchestrator/client-source.ts';
 import type { SelfTestResult } from '../orchestrator/self-test.ts';
 import { EventLog } from '../eventlog/log.ts';
-import type { ApprovalGate } from '../kernel/approval.ts';
+import { ApprovalGate } from '../kernel/approval.ts';
+import type { ApprovalDecision, ApprovalRequest } from '../kernel/approval.ts';
+import type { ShellRunner } from '../kernel/shell.ts';
 import { DEFAULT_MODEL_SETTINGS, SettingsStore, settingsToAgentEnv } from './settings.ts';
 import type { ModelSettings, PublicSettings } from './settings.ts';
 import fs from 'node:fs';
@@ -35,7 +37,9 @@ export type SessionEventType =
   | 'client.changed'
   | 'settings'
   // SPEC-019：内置浏览器的文档更新
-  | 'browser';
+  | 'browser'
+  // SPEC-023：需要人类批准的敏感动作（shell 命令）
+  | 'approval';
 
 export interface SessionEvent {
   type: SessionEventType;
@@ -59,6 +63,8 @@ export interface ClientState {
   browser: { version: number; title: string; html: string; allowNetwork: boolean } | null;
   /** SPEC-020：这个快照属于哪个对话 */
   conversation: { id: string; title: string };
+  /** SPEC-023：待人类批准的动作（没有则 null）——刷新页面也要能看到 */
+  approval: ApprovalRequest | null;
 }
 
 export interface SessionOptions {
@@ -81,6 +87,12 @@ export interface SessionOptions {
   selfTest?: (input: { changed: string[] }) => Promise<SelfTestResult>;
   /** 审批门（默认拒绝；`serve` 会用「人类在旁边看着」的策略） */
   approval?: ApprovalGate;
+  /** SPEC-023：这些动作必须**人工逐次批准**（默认只有 shell.run）；其余动作沿用 approval 的策略 */
+  humanApprovalFor?: string[];
+  /** SPEC-023：给了执行器才注册 shell 工具（默认不给） */
+  shell?: ShellRunner;
+  /** 等人批准的上限；超时按拒绝处理 */
+  approvalTimeoutMs?: number;
   /** 日志级别（默认 info） */
   logLevel?: 'debug' | 'info' | 'warn' | 'error';
   /** 是否把日志同时打到 stderr */
@@ -104,7 +116,13 @@ export class ClientSession {
   #model: ModelSettings;
   #restarting: Promise<void> = Promise.resolve();
   #closed = false;
+  #approvalTimeoutMs: number;
   readonly logger: Logger;
+  /** SPEC-023：待批准的动作（id → 等待中的请求） */
+  #pendingApprovals = new Map<
+    string,
+    { request: ApprovalRequest; resolve: (decision: ApprovalDecision) => void; timer: NodeJS.Timeout }
+  >();
   /** SPEC-020：这个会话属于哪个对话 */
   readonly id: string;
   readonly title: string;
@@ -115,6 +133,9 @@ export class ClientSession {
     this.#agentEnv = options.agentEnv ?? {};
     this.#lead = options.lead ?? {};
     this.#eventTail = options.eventTail ?? 120;
+    // 默认 10 分钟：人不可能总守在这一屏，而 2 分钟对「读清一条长命令再决定」太紧
+    // （真机上我隔了 11 分钟回来，第一次审批就是被 120s 超时判的拒绝）
+    this.#approvalTimeoutMs = options.approvalTimeoutMs ?? 600_000;
     this.id = options.id ?? 'default';
     this.title = options.title ?? (this.id === 'default' ? '默认对话' : this.id);
 
@@ -158,10 +179,29 @@ export class ClientSession {
             ...(options.selfTest === undefined ? {} : { selfTest: options.selfTest }),
           });
 
+    // SPEC-023：shell 这类动作必须人工逐次批准；其余动作沿用注入的策略（serve 里是「人类在场即放行」）
+    const askFor = new Set(options.humanApprovalFor ?? ['shell.run']);
+    const baseGate = options.approval;
+    const gate =
+      baseGate !== undefined && askFor.size === 0
+        ? baseGate
+        : new ApprovalGate({
+            policy: async (request) => {
+              if (askFor.has(request.action)) return await this.#askHuman(request);
+              return baseGate === undefined ? 'deny' : await baseGate.request(request);
+            },
+          });
+
     this.runner = new TeamRunner({
       dir: this.dir,
       log,
-      ...(options.approval === undefined ? {} : { approval: options.approval }),
+      approval: gate,
+      ...(options.shell === undefined ? {} : { shell: options.shell }),
+      logShell: (entry) => {
+        // SPEC-023：每次调用（含被拒绝的）都留痕——「谁想跑什么、人类批没批」本身就是审计要的
+        this.runner.log.append({ type: 'shell.run', conversation: this.id, ...entry });
+        this.logger.warn('shell 调用', entry);
+      },
       logger: this.logger,
       onFrame: (agentId, frame) => this.#onFrame(agentId, frame),
       ...(clientSource === undefined ? {} : { clientSource }),
@@ -384,6 +424,10 @@ export class ClientSession {
       messages,
       sources,
       conversation: { id: this.id, title: this.title },
+      approval: (() => {
+        const pending = [...this.#pendingApprovals.values()][0]?.request;
+        return pending === undefined ? null : { ...pending, agent: pending.agentId };
+      })(),
       model: this.publicSettings(),
       browser:
         browserDoc === undefined
@@ -403,6 +447,58 @@ export class ClientSession {
    */
   conversation(): ContextItem[] {
     return projectConversation(this.runner.agentEvents('lead'));
+  }
+
+  /**
+   * SPEC-023：把一个敏感动作摆到人类面前，等他点。
+   *
+   * 三条安全默认值：
+   *   1. **没有客户端连着 → 直接拒绝**（fail closed），不挂住；
+   *   2. 等人的时间有上限，超时按拒绝；
+   *   3. 同一个 id 只认第一次回复。
+   */
+  #askHuman(request: ApprovalRequest): Promise<ApprovalDecision> {
+    if (this.#listeners.size === 0) {
+      this.logger.warn('无人可批，直接拒绝', { action: request.action, detail: request.detail });
+      return Promise.resolve('deny');
+    }
+
+    const timeoutMs = this.#approvalTimeoutMs;
+    return new Promise<ApprovalDecision>((resolve) => {
+      const done = (decision: ApprovalDecision): void => {
+        const pending = this.#pendingApprovals.get(request.id);
+        if (pending !== undefined) clearTimeout(pending.timer);
+        this.#pendingApprovals.delete(request.id);
+        this.#emit({ type: 'state', data: this.state() });
+        resolve(decision);
+      };
+
+      const timer = setTimeout(() => {
+        this.logger.warn('等人批准超时，按拒绝处理', { id: request.id, action: request.action });
+        done('deny');
+      }, timeoutMs);
+
+      this.#pendingApprovals.set(request.id, { request, resolve: done, timer });
+      this.logger.warn('请求人类批准', { id: request.id, action: request.action, detail: request.detail });
+      // 按冻结契约发 `agent`（内核的 ApprovalRequest 里叫 agentId）——两个都给，
+      // 消费方按哪个读都行，但不许出现「契约里写了却没发」的字段
+      this.#emit({ type: 'approval', data: { ...request, agent: request.agentId } });
+      this.#emit({ type: 'state', data: this.state() });
+    });
+  }
+
+  /** 人类的回复（POST /api/approval）。未知 id / 非法 decision 一律拒绝。 */
+  respondApproval(id: unknown, decision: unknown): { ok: boolean; error?: string } {
+    if (typeof id !== 'string' || id === '') return { ok: false, error: 'BAD_ID' };
+    const allowed: ApprovalDecision[] = ['allow_once', 'allow_always', 'deny'];
+    if (typeof decision !== 'string' || !allowed.includes(decision as ApprovalDecision)) {
+      return { ok: false, error: 'BAD_DECISION' };
+    }
+    const pending = this.#pendingApprovals.get(id);
+    if (pending === undefined) return { ok: false, error: 'NO_SUCH_APPROVAL' };
+
+    pending.resolve(decision as ApprovalDecision); // done() 会清定时器与表项
+    return { ok: true };
   }
 
   lastActiveAt(): string {
@@ -624,6 +720,12 @@ export class ClientSession {
 
   async close(): Promise<void> {
     this.#closed = true;
+    // 关停时把还挂着的审批按拒绝收掉，否则等它的人会一直等
+    for (const [, pending] of this.#pendingApprovals) {
+      clearTimeout(pending.timer);
+      pending.resolve('deny');
+    }
+    this.#pendingApprovals.clear();
     // 先等重启链收尾：否则它会在我们把进程都回收之后又拉起一个
     await this.#restarting.catch(() => undefined);
     await this.runner.reclaim();
@@ -697,6 +799,13 @@ function summarize(event: LoggedEvent): string {
       return `收到来自 ${String(event.from)} 的消息`;
     case 'ui.patch':
       return `界面改动 ${String(event.op)} @ ${String(event.scope)}${event.rejected === true ? '（被拒绝）' : ''}`;
+    case 'shell.run': {
+      const decision = String(event.decision ?? '');
+      const detail = `shell：${String(event.command ?? '').slice(0, 60)}`;
+      if (decision === 'deny') return `${detail}（人类拒绝）`;
+      const code = event.code;
+      return `${detail}（退出码 ${code === null || code === undefined ? '被中断' : String(code)}）`;
+    }
     case 'browser.event':
       return event.kind === 'emit'
         ? `浏览器交互：${String(event.name)}`

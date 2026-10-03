@@ -196,6 +196,61 @@
     </main>
 
     <!--
+      SPEC-023 §三 / SHELL-011 审批对话框：Agent 想跑一条 shell 命令时由人类亲手点击决定。
+
+      三条结构性底线（不是靠文案，是 DOM 结构保证的）：
+      1. 不是 <form>，三个按钮都是 type="button" —— 没有「回车提交」这条路；
+         初始焦点由 approval.js 放在「拒绝」上，弹窗一出来按回车只会拒绝；
+      2. 完整命令原文只写进 #approval-detail 的 textContent（等宽 + 可换行，不截断、
+         不省略），绝不 innerHTML —— 这是人判断「这条命令能不能跑」的唯一依据；
+      3. 没有待批时整块 hidden（不占位、不影响其他区域），没有定时器、没有自动同意。
+    -->
+    <section
+      id="approval"
+      class="approval"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="approval-title"
+      hidden
+    >
+      <div class="approval-card">
+        <header class="approval-head">
+          <h2 id="approval-title" class="approval-title">Agent 请求执行命令</h2>
+          <span class="approval-warning" aria-hidden="true">需要你批准</span>
+        </header>
+
+        <div class="approval-meta">
+          <span class="approval-meta-item">
+            <span class="approval-meta-key">风险</span>
+            <span id="approval-risk" class="approval-risk" data-tone=""></span>
+          </span>
+          <span class="approval-meta-item">
+            <span class="approval-meta-key">发起者</span>
+            <span id="approval-agent" class="approval-agent"></span>
+          </span>
+          <span class="approval-meta-item">
+            <span class="approval-meta-key">动作</span>
+            <span id="approval-action" class="approval-action"></span>
+          </span>
+        </div>
+
+        <p class="approval-lead">下面就是完整命令原文，请逐字核对后再决定：</p>
+        <pre id="approval-detail" class="approval-detail" tabindex="0" aria-label="完整命令原文"></pre>
+
+        <!-- 回复失败（400 / 网络）时显示原因，对话框保持打开，人可以重试 -->
+        <div id="approval-error" class="approval-error" role="alert" hidden></div>
+
+        <div class="approval-actions">
+          <!-- 「拒绝」在最前，也是初始焦点：安全默认 -->
+          <button id="approval-deny" class="btn btn-danger approval-btn" type="button" data-decision="deny">拒绝</button>
+          <button id="approval-once" class="btn approval-btn" type="button" data-decision="allow_once">允许一次</button>
+          <button id="approval-always" class="btn btn-primary approval-btn" type="button" data-decision="allow_always">一直允许</button>
+        </div>
+        <p class="approval-note">不会自动同意：必须由你点击上面三个按钮之一。</p>
+      </div>
+    </section>
+
+    <!--
       SPEC-017 设置页：一个覆盖主区域的独立页（返回按钮回到对话，不刷新页面）。
       说明文案 / placeholder / 预设按钮由 src/client/settings.js 在运行时填，
       所以这里不写死任何端点地址；所有进 DOM 的动态文本都经过转义。

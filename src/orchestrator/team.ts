@@ -25,6 +25,7 @@ import { HOST_TOOL_NAMES, createHostTools } from './host-tools.ts';
 import type { ClientChangedPayload, HostRuntime, HostTool } from './host-tools.ts';
 import { BrowserHost } from '../browser/document.ts';
 import { WorkspaceStore } from '../workspace/store.ts';
+import type { ShellRunner } from '../kernel/shell.ts';
 import { silentLogger } from '../log/logger.ts';
 import type { Logger } from '../log/logger.ts';
 import type { ClientSource } from './client-source.ts';
@@ -55,6 +56,18 @@ export interface TeamRunnerOptions {
   browser?: BrowserHost;
   /** 可注入的工作空间（默认 <dir>/workspace） */
   workspace?: WorkspaceStore;
+  /** SPEC-023：给了执行器才注册 shell.run（默认不给 = 模型看不到这个工具） */
+  shell?: ShellRunner;
+  /** SPEC-023 审计回调：每次 shell 调用（含被拒绝的）都过它 */
+  logShell?: (entry: {
+    command: string;
+    decision: string;
+    code: number | null;
+    durationMs: number;
+    timedOut?: boolean;
+    truncated?: boolean;
+    note?: string;
+  }) => void;
 }
 
 export interface SpawnAgentOptions {
@@ -83,6 +96,19 @@ export class TeamRunner implements HostRuntime {
   readonly browser: BrowserHost;
   /** SPEC-021 工作空间 */
   readonly workspace: WorkspaceStore;
+  /** SPEC-023 shell 执行器（没启用则为 undefined） */
+  readonly shell: ShellRunner | undefined;
+  readonly logShell:
+    | ((entry: {
+        command: string;
+        decision: string;
+        code: number | null;
+        durationMs: number;
+        timedOut?: boolean;
+        truncated?: boolean;
+        note?: string;
+      }) => void)
+    | undefined;
   readonly board: TaskBoard;
   readonly mailbox: Mailbox;
   readonly document: ViewDocument;
@@ -114,18 +140,26 @@ export class TeamRunner implements HostRuntime {
       logRoot: path.join(this.dir, 'agents'),
       logger: (options.logger ?? silentLogger).child('pool'),
     });
-    this.#tools = createHostTools();
+    this.#tools = createHostTools({ shell: options.shell !== undefined });
     this.#scripts = options.scripts ?? {};
     this.#onFrameHook = options.onFrame;
     this.clientSource = options.clientSource;
     this.onClientChanged = options.onClientChanged;
     this.browser = options.browser ?? new BrowserHost();
     this.workspace = options.workspace ?? new WorkspaceStore({ root: path.join(this.dir, 'workspace') });
+    this.shell = options.shell;
+    this.logShell = options.logShell;
     this.onBrowserChanged = options.onBrowserChanged;
   }
 
+  /**
+   * 声明给子进程的工具名 = **实际注册的那些**。
+   *
+   * 不能直接返回常量表：`shell.run` 在表里，但没启用 shell 时它没被注册 ——
+   * 若照样声明，模型会去调用一个不存在的工具，只会拿到 UNKNOWN_TOOL。
+   */
   get hostToolNames(): readonly string[] {
-    return HOST_TOOL_NAMES;
+    return this.#tools.map((tool) => tool.name);
   }
 
   listAgents(): AgentProcess[] {
@@ -147,7 +181,7 @@ export class TeamRunner implements HostRuntime {
     const handle = this.pool.spawn({
       agentId,
       logDir: path.join(this.dir, 'agents', agentId),
-      hostTools: [...HOST_TOOL_NAMES],
+      hostTools: [...this.hostToolNames],
       ...(script === undefined ? {} : { script }),
       ...(options.stepDelayMs === undefined ? {} : { stepDelayMs: options.stepDelayMs }),
       ...(options.hostToolTimeoutMs === undefined ? {} : { hostToolTimeoutMs: options.hostToolTimeoutMs }),

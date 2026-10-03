@@ -1428,3 +1428,175 @@ body {
     opacity: 0.15;
   }
 }
+
+/* ---------- 审批对话框（SPEC-023 §三 / SHELL-011） ---------- */
+
+/*
+ * 全屏浮层：默认 hidden，不占位、不影响其他区域。
+ * 遮罩挡掉底下的点击，避免人类在没看清命令时误触别处。
+ */
+.approval {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px 16px;
+  background: rgba(2, 4, 9, 0.72);
+  backdrop-filter: blur(3px);
+}
+
+/* display:flex 会盖掉 [hidden]，必须显式写：没有待批时整块消失 */
+.approval[hidden] {
+  display: none;
+}
+
+.approval-card {
+  width: min(760px, 100%);
+  max-height: calc(100vh - 48px);
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 18px 18px 16px;
+  border: 1px solid rgba(248, 113, 113, 0.55);
+  border-radius: var(--radius);
+  background: rgba(11, 16, 28, 0.98);
+  box-shadow: 0 20px 48px rgba(0, 0, 0, 0.6);
+  overflow: hidden;
+}
+
+.approval-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.approval-title {
+  margin: 0;
+  font-size: 16px;
+  color: var(--text);
+}
+
+.approval-warning {
+  padding: 2px 10px;
+  border: 1px solid rgba(248, 113, 113, 0.6);
+  border-radius: 999px;
+  color: var(--danger);
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.approval-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  font-size: 12.5px;
+}
+
+.approval-meta-item {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.approval-meta-key {
+  color: var(--text-muted);
+}
+
+.approval-risk,
+.approval-agent,
+.approval-action {
+  font-family: var(--mono);
+  color: var(--text);
+}
+
+/* 风险等级配色：high=红 / medium=黄 / low=青；认不出的等级用中性色，绝不画成「安全」 */
+.approval-risk[data-tone="danger"] {
+  color: var(--danger);
+}
+
+.approval-risk[data-tone="warning"] {
+  color: var(--warning);
+}
+
+.approval-risk[data-tone="info"] {
+  color: var(--cyan);
+}
+
+.approval-risk[data-tone="default"] {
+  color: var(--text-muted);
+}
+
+.approval-lead {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12.5px;
+}
+
+/*
+ * 完整命令原文：等宽 + 保留换行与空白 + 长行折行。
+ * 刻意**不截断、不省略**（没有 text-overflow / line-clamp），高了就滚动 ——
+ * 命令很长时也要能看全，任何「…」都可能藏掉关键的那一段。
+ */
+.approval-detail {
+  margin: 0;
+  padding: 12px;
+  max-height: 42vh;
+  overflow: auto;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-sm);
+  background: #05070d;
+  color: var(--text);
+  font-family: var(--mono);
+  font-size: 13px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+
+.approval-detail:focus-visible {
+  outline: 2px solid var(--cyan);
+  outline-offset: 1px;
+}
+
+/* 回复失败的原因：留在窗口里，人可以照着原因重试 */
+.approval-error {
+  padding: 8px 10px;
+  border: 1px solid rgba(248, 113, 113, 0.5);
+  border-radius: var(--radius-sm);
+  background: rgba(248, 113, 113, 0.08);
+  color: var(--danger);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.approval-error[hidden] {
+  display: none;
+}
+
+.approval-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.approval-btn {
+  min-width: 96px;
+}
+
+/* 请求在飞：按钮禁用，避免连点出两次回复 */
+.approval-btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.approval-note {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}

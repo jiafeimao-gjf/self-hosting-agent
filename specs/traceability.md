@@ -191,6 +191,17 @@
 | **SET-015** | specs/015-model-settings.md | 多对话之前的全局 `<root>/settings.json` 在启动时**幂等迁移**进默认对话：目标已存在则不覆盖（用户后来配的优先），老文件保留不删（不带 Key 的东西宁可多留一份也不悄悄删）。 | `test/settings.test.ts` · 旧位置 <root>/settings.json 幂等迁移进默认对话，老文件保留 |
 | **SET-016** | specs/015-model-settings.md | 列出可用模型：`POST /api/models` 按候选配置（不写盘）拉取列表——OpenAI 兼容走 `{baseUrl}/models`、Anthropic 走 `{baseUrl}/v1/models` + `x-api-key`；返回 `{ok, models:[{id,label?}], count}`，条目有上限；超时 / 连不上 / 鉴权失败 / 响应格式不对都给出**可归因**的错误码，且**绝不回显 Key**。 | `test/settings.test.ts` · 列模型：两家协议各走各的端点，错误可归因且绝不回显 Key<br>`test/settings.test.ts` · 列模型的 HTTP 接口：候选配置不写盘，非法配置 400 |
 | **SET-017** | specs/015-model-settings.md | 客户端「列出模型」：一次点击即列出端点上的模型并渲染成可点选的候选（`datalist` 提供输入联想 + 候选按钮**点一下即切换**，走与保存完全相同的路径）；本地 Ollama 必须能列出本机模型并尽量带上体积/参数量；列表为空或失败都显示原因，且**不阻断手动输入模型名**。 | `test/client-settings-ui.test.ts` · 列模型：不要求先填模型名，候选可点选、全部转义、失败也不阻断手动输入 |
+| **SHELL-001** | specs/023-shell.md | 默认不注册：不传 `--allow-shell` 时 `shell.run` 不在工具表里（模型看不到），传了才在。 | `test/shell.test.ts` · 默认不注册 shell：不启用就看不到这个工具，启用才在<br>`test/shell.test.ts` · 子进程只声明宿主真正注册的工具（没启用就不声明 shell.run） |
+| **SHELL-002** | specs/023-shell.md | 每次调用都过审批门：策略说 `deny` 时**不执行任何命令**，并返回明确的拒绝错误。 | `test/shell.test.ts` · 审批说拒绝就一行命令都不执行<br>`test/shell.test.ts` · 端到端：子进程调 shell.run → 人类批准 → 命令真的执行 → 结果回给 Agent |
+| **SHELL-003** | specs/023-shell.md | 执行结果形状稳定：`{code, stdout, stderr, durationMs, timedOut, truncated}`；退出码原样透传（非 0 不是异常）。 | `test/shell.test.ts` · 执行结果形状稳定：退出码原样透传，非 0 不算异常 |
+| **SHELL-004** | specs/023-shell.md | 超时会杀掉**整棵进程树**（含后台子进程），返回 `timedOut: true`，且不挂住调用方。 | `test/shell.test.ts` · 超时后进程组里的后台进程确实死了 |
+| **SHELL-005** | specs/023-shell.md | 输出有上限：超大 stdout 被截断并标记 `truncated`，字节数如实报告。 | `test/shell.test.ts` · 输出有上限：超大输出被截断并标记，字节数如实 |
+| **SHELL-006** | specs/023-shell.md | 环境变量白名单：`AGENT_API_KEY` 等 `AGENT_*` 变量不出现在子进程环境里（用 `env` 验证）。 | `test/shell.test.ts` · 环境变量白名单：AGENT_* 与密钥绝不进 shell |
+| **SHELL-007** | specs/023-shell.md | cwd 落在该对话的工作空间；工作空间不存在时自动创建。 | `test/shell.test.ts` · cwd 落在该对话的工作空间，不存在时自动创建 |
+| **SHELL-008** | specs/023-shell.md | 每次调用（含被拒绝的）都写事件日志，含命令与结果摘要。 | `test/shell.test.ts` · 每次调用（含被拒绝的）都写事件日志 |
+| **SHELL-009** | specs/023-shell.md | 审批交互：宿主发出 `approval` 事件、人类 `POST /api/approval` 后放行； | `test/shell.test.ts` · 审批交互：发出 approval 事件，人类回复后放行；重复回复只认第一次 |
+| **SHELL-010** | specs/023-shell.md | **没人在就是拒绝**：无客户端连接时审批请求立刻 `deny`，不挂住；等人超时也按拒绝处理。 | `test/shell.test.ts` · 没人在就是拒绝：无客户端连接时审批立刻 deny，不挂住<br>`test/shell.test.ts` · 等人超时按拒绝处理<br>`test/shell.test.ts` · 默认审批超时足够长：人不可能守着屏幕等（真机上吃过 120s 的亏） |
+| **SHELL-011** | specs/023-shell.md | 客户端审批对话框：显示完整命令、三个按钮、**必须人工点击**，不允许自动同意； | `test/client-approval-ui.test.ts` · 审批归一化：detail 是完整命令原文一字不改；没有 id 就是没有待批<br>`test/client-approval-ui.test.ts` · 展示模型：显示风险等级与发起者，命令原文逐字保留（含注入串）<br>`test/client-approval-ui.test.ts` · 对话框：弹出后显示完整命令（只走 textContent），初始焦点在「拒绝」<br>`test/client-approval-ui.test.ts` · 幂等与状态同步：同一 id 不叠窗；没有待批就隐藏；老服务端缺字段不清掉待批<br>`test/client-approval-ui.test.ts` · 三个按钮：点击才发 POST /api/approval，请求体是 {id, decision}，成功后关窗<br>`test/client-approval-ui.test.ts` · 回复失败（400 / 网络）显示原因并保持对话框打开，人可以原样重试<br>`test/client-approval-ui.test.ts` · 必须人工点击才能决定：没有定时器 / 键盘快捷键 / 默认允许，且 DOM 不为同意留后门<br>`test/client-approval-ui.test.ts` · DOM / 样式 / app.js 接线：完整命令可换行看全，回复带当前对话，既有 id 不动 |
 | **STREAM-001** | specs/022-streaming.md | SSE 解析器：跨 chunk 切断、CRLF、多行 `data`、注释心跳、`[DONE]`、`flush()` 吐出最后一条；增量节流按时间合流且收尾必发。 | `test/stream.test.ts` · SSE 解析：跨 chunk 切断、CRLF、多行 data、注释心跳、[DONE]<br>`test/stream.test.ts` · 增量节流：按时间合流，收尾那一条一定发出去 |
 | **STREAM-002** | specs/022-streaming.md | 两家适配器都能流式解析：OpenAI 的 `delta.content` + 分批 `tool_calls`、Anthropic 的 `text_delta` + `input_json_delta` + `content_block_start`；请求体带 `stream: true`；**拼回来之后与非流式解析结果完全一致**。 | `test/stream.test.ts` · OpenAI 流式：文本增量 + 分批 tool_calls 拼接，结果与非流式完全一致<br>`test/stream.test.ts` · Anthropic 流式：text_delta 与 input_json_delta 拼回同一条 message |
 | **STREAM-003** | specs/022-streaming.md | 流式失败降级为非流式（并留下可查原因），而不是把整轮变成错误；超时不降级重试。 | `test/stream.test.ts` · 流式失败要降级为非流式，而不是把整轮搞死 |
@@ -259,7 +270,7 @@
 
 ## 统计
 
-- 验收标准：**252** 条
-- 已覆盖：**252** 条
+- 验收标准：**263** 条
+- 已覆盖：**263** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

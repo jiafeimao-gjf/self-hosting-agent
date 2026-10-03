@@ -17,6 +17,7 @@ import { ClientSession } from './server/session.ts';
 import type { ModelSettings } from './server/settings.ts';
 import { startServer } from './server/http-server.ts';
 import { ConversationRegistry } from './server/conversations.ts';
+import { createShellRunner } from './kernel/shell.ts';
 import { migrateLegacySettings } from './server/settings.ts';
 import { ViewDocument } from './surface/document.ts';
 import { SurfaceIngest } from './surface/ingest.ts';
@@ -269,13 +270,20 @@ async function runServe(argv: string[]): Promise<number> {
 
   // SPEC-020：一个对话一个会话，各自独立的目录/子进程/文档/事件日志。
   // 会话是**惰性**打开的：只有真的用到某个对话时才建它、才拉起它的 Lead。
+  // SPEC-023：不给 --allow-shell 时 shell 工具**根本不注册**（模型看不到，也就没有试一试的机会）
+  const allowShell = args['allow-shell'] === 'true';
+  const shell = allowShell ? createShellRunner() : undefined;
+
   const makeSessionOptions = (id: string, dir: string): ConstructorParameters<typeof ClientSession>[0] => ({
     dir,
     id,
     agentEnv,
     modelSettings,
-    // 人类就坐在这个页面前面，所以审批门给「放行一次」的策略——但每一次都留痕可查
+    // 中等风险动作（拉子进程、改客户端源码）沿用「人类在场即放行」——但每一次都留痕可查；
+    // shell.run 这种任意命令执行不吃这条策略，它必须人工逐次批准（见 ClientSession 的门）
     approval: new ApprovalGate({ policy: () => 'allow_once' }),
+    ...(shell === undefined ? {} : { shell }),
+    ...(args['approval-timeout'] === undefined ? {} : { approvalTimeoutMs: Number(args['approval-timeout']) }),
     logEcho: args['log-echo'] === 'true' || process.env.AGENT_LOG_ECHO === '1',
     ...(args['log-level'] === undefined ? {} : { logLevel: args['log-level'] as 'debug' | 'info' | 'warn' | 'error' }),
   });
@@ -316,7 +324,11 @@ async function runServe(argv: string[]): Promise<number> {
   }
   console.log(`  日志：${session.logger.file() ?? '（未开启文件日志）'}`);
   console.log('  排障：npm run serve -- --log-level debug --log-echo true（同时打到终端）');
-  console.log('  审批：人类在场 → 自动放行，但每次动作都写进事件日志（审批 UI 属下一阶段）');
+  console.log(
+    allowShell
+      ? '  审批：中等风险动作人类在场即放行；**shell 命令逐条人工批准**（界面上会弹对话框）'
+      : '  审批：人类在场 → 自动放行，但每次动作都写进事件日志；shell 工具未启用（--allow-shell 开启后会逐条人工批准）',
+  );
   console.log('\n  在页面里说话，Agent 会一边回你，一边把它自己的界面改给你看。');
   console.log('  试试说「换个配色」——它会去改自己的 style.css，自检通过后界面当场变色。Ctrl+C 退出。\n');
 

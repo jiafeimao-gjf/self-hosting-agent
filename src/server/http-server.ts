@@ -320,6 +320,17 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       return;
     }
 
+    if (route === '/api/approval' && method === 'POST') {
+      // SPEC-023：人类对被拦下的敏感动作做决定
+      readBody(req)
+        .then((body) => {
+          const outcome = session.respondApproval(body.id, body.decision);
+          sendJson(res, outcome.ok ? 200 : 400, outcome.ok ? { ok: true } : { ok: false, error: outcome.error });
+        })
+        .catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
+      return;
+    }
+
     if (route === '/api/models' && method === 'POST') {
       // SPEC-015 SET-016：按候选配置列模型（不写盘），失败给可归因的原因
       readBody(req)

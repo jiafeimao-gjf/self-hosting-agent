@@ -13,6 +13,7 @@ import type { ViewDocument } from '../surface/document.ts';
 import type { SurfaceIngest } from '../surface/ingest.ts';
 import type { BrowserHost } from '../browser/document.ts';
 import type { WorkspaceStore } from '../workspace/store.ts';
+import type { ShellRunner } from '../kernel/shell.ts';
 import type { ClientSource } from './client-source.ts';
 
 /** 宿主工具清单：宿主与子进程两边都按这份名字对齐 */
@@ -32,6 +33,8 @@ export const HOST_TOOL_NAMES = [
   'client.read',
   'client.write',
   'client.revert',
+  // SPEC-023：只有传了 --allow-shell、且 runtime 真给了执行器时才注册（默认不给）
+  'shell.run',
 ] as const;
 
 /** SPEC-013：客户端源码被改动时广播给外界（浏览器据此热更新/提示刷新） */
@@ -56,6 +59,18 @@ export interface HostRuntime {
   browser: BrowserHost;
   /** SPEC-021 工作空间：Agent 落盘文件的地方（路径受限于该目录） */
   workspace: WorkspaceStore;
+  /** SPEC-023 shell 执行器；**不给就没有 shell 工具**（默认不给） */
+  shell?: ShellRunner;
+  /** SPEC-023 审计：每次调用（含被拒绝的）都要留痕 */
+  logShell?: (entry: {
+    command: string;
+    decision: string;
+    code: number | null;
+    durationMs: number;
+    timedOut?: boolean;
+    truncated?: boolean;
+    note?: string;
+  }) => void;
   document: ViewDocument;
   spawnAgent(
     agentId: string,
@@ -102,8 +117,8 @@ function done(payload: unknown): HostToolResult {
   return { ok: true, result: JSON.stringify(payload) };
 }
 
-export function createHostTools(): HostTool[] {
-  return [
+export function createHostTools(options: { shell?: boolean } = {}): HostTool[] {
+  const tools: HostTool[] = [
     {
       name: 'agent.spawn',
       description: '拉起一个新的 Agent 子进程（需要审批），并把 brief 投递给它',
@@ -398,4 +413,64 @@ export function createHostTools(): HostTool[] {
       },
     },
   ];
+
+  // SPEC-023：默认**不注册** shell —— 模型连这个工具都看不到，也就没有"试一试"的机会
+  if (options.shell === true) tools.push(createShellTool());
+  return tools;
+}
+
+/**
+ * SPEC-023 shell 工具：每条命令都要人类批准。
+ *
+ * 注意这里的审批与 `agent.spawn` 不是一回事：那个是中等风险、人类在场即放行；
+ * 这个是**用户级任意命令执行**，必须把命令原文摆到人面前由人决定。
+ */
+function createShellTool(): HostTool {
+  return {
+    name: 'shell.run',
+    description: '在人类批准后执行一条 shell 命令（bash -lc），返回退出码与输出；危险动作会等人批准',
+    async run(args, runtime, caller) {
+      const command = asString(args.command);
+      if (command.trim() === '') return fail('INVALID_ARGS: shell.run 需要 command');
+      if (runtime.shell === undefined) return fail('SHELL_DISABLED: 这个宿主没有启用 shell');
+
+      const decision = await runtime.approval.request({
+        id: `appr_shell_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
+        action: 'shell.run',
+        risk: 'high',
+        agentId: caller,
+        detail: command, // 人类做判断的唯一依据：完整命令原文
+      });
+      if (decision === 'deny') {
+        runtime.logShell?.({ command, decision, code: null, durationMs: 0, note: '审批被拒绝' });
+        return fail('审批被拒绝：shell.run');
+      }
+
+      // cwd 落在该对话的工作空间（是落脚点，不是边界——命令依然能 cd 出去）
+      runtime.workspace.ensure();
+      const result = await runtime.shell.run({
+        command,
+        cwd: runtime.workspace.root,
+        ...(typeof args.timeoutMs === 'number' ? { timeoutMs: args.timeoutMs } : {}),
+      });
+
+      runtime.logShell?.({
+        command,
+        decision,
+        code: result.code,
+        durationMs: result.durationMs,
+        timedOut: result.timedOut,
+        truncated: result.truncated,
+      });
+
+      return done({
+        code: result.code,
+        stdout: result.stdout,
+        stderr: result.stderr,
+        durationMs: result.durationMs,
+        timedOut: result.timedOut,
+        truncated: result.truncated,
+      });
+    },
+  };
 }

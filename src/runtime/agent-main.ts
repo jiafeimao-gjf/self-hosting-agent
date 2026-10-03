@@ -183,6 +183,11 @@ const HOST_TOOL_DESCRIPTIONS: Record<string, string> = {
     '参数：html（必填，完整文档或片段都行）、title?、allowNetwork?（默认 false，禁止外链网络）。' +
     '文档里的交互可以回流：给元素加 data-ac-emit="事件名"，人类点击后你会收到一条「浏览器交互」消息；' +
     '文档内也能调 window.AgentClient.emit(name, payload) 主动上报。适合图表、表单、小工具这类界面文档表达不了的东西。',
+  'shell.run':
+    '执行一条 shell 命令（bash -lc，cwd 是当前对话的工作空间）。**每一次调用都会请求人类批准**，' +
+    '人类会看到完整命令原文并决定批不批；被拒绝就什么都不会执行。' +
+    '参数：command（必填）、timeoutMs?（默认 30s，上限 300s）。输出超过 64KB 会被截断。' +
+    '适合跑测试、查文件、装依赖这类需要真命令的场景；能不用就别用。',
   'workspace.write':
     '把内容写进**当前对话的工作空间**（真实落盘、跨轮次持久）。参数：path（相对路径，不能越出工作空间）、content、append?（true 表示追加）。' +
     '适合放报告草稿、数据、配置这类要留下来的东西。',
@@ -212,6 +217,7 @@ const SYSTEM_PROMPT = [
   '3. 回复用中文、短句、说结论。长内容放进界面里，而不是堆在对话里。',
   '4. 只有确实需要并行干活时，才用 agent.spawn 拉起队友（这会请求人类审批）。',
   '4b. 要留下东西（报告、数据、配置）就写进工作空间（workspace.write）——那是真的落盘，人类也能在「文件」里看到。',
+  '4c. 要用 shell 就跑 shell.run——但记住每次都会请人类批准，命令要写得让人一眼看懂要干什么。',
   '5. 做完一件事，用一句话告诉人类你做了什么、下一步建议什么。',
 ].join('\n');
 
@@ -249,6 +255,14 @@ const HOST_TOOL_SCHEMAS: Record<string, Record<string, unknown>> = {
       allowNetwork: { type: 'boolean', description: '是否允许加载外部资源，默认 false' },
     },
     required: ['html'],
+  },
+  'shell.run': {
+    type: 'object',
+    properties: {
+      command: { type: 'string', description: '要执行的完整命令' },
+      timeoutMs: { type: 'number', description: '超时毫秒数，默认 30000' },
+    },
+    required: ['command'],
   },
   'workspace.write': {
     type: 'object',
