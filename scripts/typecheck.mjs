@@ -30,7 +30,6 @@ function resolveTsc() {
 
   const candidates = [
     process.env.TSC_PATH,
-    path.join(os.homedir(), 'oh-my-ppt', 'node_modules', '.bin', 'tsc'),
     '/opt/homebrew/lib/node_modules/typescript/bin/tsc',
     '/usr/local/lib/node_modules/typescript/bin/tsc',
     path.join(os.homedir(), '.bun', 'install', 'global', 'node_modules', 'typescript', 'bin', 'tsc'),

@@ -2,11 +2,31 @@
   "name": "agent-client",
   "version": "0.0.1",
   "private": true,
+  "description": "自举式 Agent 客户端：原生多 Agent、每个 Agent 一个独立子进程，界面与浏览器面板都能被 Agent 亲手改造",
+  "license": "Apache-2.0",
   "type": "module",
-  "description": "Agent Client —— 原生多 Agent、独立 Agent Loop 子进程、界面可由 Agent 动态改造的客户端（P0 内核垂直切片 + P1 多 Agent 编排）",
   "engines": {
     "node": ">=24.0.0"
   },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jiafeimao-gjf/self-hosting-agent.git"
+  },
+  "homepage": "https://github.com/jiafeimao-gjf/self-hosting-agent#readme",
+  "bugs": {
+    "url": "https://github.com/jiafeimao-gjf/self-hosting-agent/issues"
+  },
+  "keywords": [
+    "ai-agent",
+    "agent",
+    "multi-agent",
+    "llm",
+    "self-hosting",
+    "nodejs",
+    "typescript",
+    "ollama",
+    "sse"
+  ],
   "scripts": {
     "test": "node --test \"test/**/*.test.ts\"",
     "test:watch": "node --test --watch \"test/**/*.test.ts\"",

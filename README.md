@@ -1,8 +1,15 @@
-# agent-client
+# self-hosting-agent
 
 > 客户端不是 Agent 的宿主，而是 Agent 的笔。
 
-按《把界面交给 Agent：原生多 Agent 客户端架构设计》落地的工程实现。当前处于 **P2：可用客户端**。
+一个**自举式 Agent 客户端**：原生多 Agent，每个 Agent 一个独立子进程；界面不是写死的前端，
+而是 Agent 的输出——它能画组件、能直接渲染一份 HTML 到沙箱、也能改客户端自己的源码（改坏了自动回滚）。
+
+零第三方运行时依赖（Node 24 原生跑 TypeScript），规格与测试一一对应，`npm run trace` 是硬门禁。
+
+![界面](docs/screenshot-surface.png)
+
+按《把界面交给 Agent：原生多 Agent 客户端架构设计》落地。当前进度 **P0–P7**。
 
 ## 当前状态
 
@@ -151,17 +158,18 @@ npm run serve      # 自动探测本机 Ollama，探测不到就用内置演示�
 | 区域 | 内容 |
 | --- | --- |
 | 左栏 · 对话 | 人类消息靠右，Agent 思考靠左，工具调用压缩成一行摘要 |
-| 右上 · 界面面板 | Agent 发来的 View Spec 渲染结果，跑在 `<iframe sandbox srcdoc>` 里（渲染沙箱）；带版本号与一键回滚 |
-| 右下 · 检查器 | Agent 进程表（含 pid）、任务板、事件时间线 |
-| 顶栏 | 连接状态、界面版本、回滚、**中断（人类夺权）** |
+| 右上 · 界面面板 | 三个页签：**界面**（Agent 发来的 View Spec 渲染结果）、**浏览器**（Agent 直接给的 HTML，脚本真的跑，交互会回流给 Agent）、**文件**（工作空间里的文件，点击按需加载）——都在 `<iframe sandbox="allow-scripts">` 里，带版本号与一键回滚 |
+| 右下 · 检查器 | Agent 进程表（含 pid）、任务板、事件时间线、客户端源码；**可以最小化**把空间让给上半区 |
+| 顶栏 | 对话切换（每个对话独立）：新建 / 删除、连接状态、界面版本、回滚、**中断（人类夺权）**、模型 chip、设置 |
 
 真模型跑通的例子（本机 `qwen3:4b`，问「这个季度预算花得怎么样」）：模型自己决定调用 `ui.render`，于是面板上出现了「预算使用状况 / 已使用 620,000（62%）/ 使用进度 / 剩余 380,000」——**我们没写这个界面，是它画的**。
 
 ## 两个可跑的演示
 
 ```bash
-npm run demo    # P0：单 Agent —— 子进程跑完五步 → ui.patch → 界面文档 v1 → HTML
-npm run team    # P1：多 Agent —— Lead 建任务 → 拉起队友 → 队友领活干完 → 回报 → Lead 改界面
+npm run demo    # 单 Agent —— 子进程跑完五步 → ui.patch → 界面文档 v1 → HTML
+npm run team    # 多 Agent —— Lead 建任务 → 拉起队友 → 队友领活干完 → 回报 → Lead 改界面
+npm run check   # 规格追溯门禁 + 全部测试（零依赖，离线可跑）
 ```
 
 `npm run team` 的真实输出（两个独立进程、6 次宿主工具调用、任务板终态 completed）：
@@ -175,7 +183,7 @@ npm run team    # P1：多 Agent —— Lead 建任务 → 拉起队友 → 队�
 事件日志：81 条 {"agent.spawn":2,"agent.frame":65,"host.tool.call":6,"host.tool.result":6,"agent.exit":2}
 ```
 
-## P1：宿主工具与编排（为什么这么设计）
+## 宿主工具与编排（为什么这么设计）
 
 Loop 是被 Kernel 托管的进程，它能调模型、跑本地工具，但有三件事**做不到也不该做**：拉起新进程、给别的 Agent 投递消息、把界面改动写进界面文档。
 
@@ -275,4 +283,14 @@ scripts/        trace.mjs（规格 ⇄ 测试 双向门禁）
 
 ## 边界
 
-P0 只做**可测的内核垂直切片**：真实模型端口、Electron/Tauri 宿主、iframe 沙箱、热更新属于 P1–P3。当前模型端口是确定性的假实现，因此整套协作流程可以在 CI 里完全离线复现。
+目前还没有做的：**人类审批 UI**（现在人类在场即自动放行，但每一次动作都留在事件日志里）、
+**Electron/Tauri 外壳**（现在是浏览器 + 本地服务）、**浏览器面板的真实 URL 导航**、**组件级 HMR**（现在 CSS 无刷新，JS/HTML 给一个必须由人点的刷新按钮）。
+
+内置演示模型（`--model demo`）是确定性的，所以整套协作流程可以在 CI 里**完全离线**复现；
+真模型走 OpenAI 兼容或 Anthropic 协议，两条路都有端到端测试守着。
+
+## 许可证
+
+[Apache-2.0](LICENSE) © 2026 jiafeimao-gjf
+
+选 Apache-2.0 而不是 MIT，是因为它额外包含**专利授权**条款，对公司/企业用户更友好。

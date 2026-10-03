@@ -1,0 +1,20 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: '24'
+      # 零第三方运行时依赖：不需要 npm install 就能跑
+      - name: 规格追溯门禁 + 全部测试
+        run: npm run check
+      - name: 类型检查（没装 tsc 会自动跳过，不伪装通过）
+        run: npm run typecheck
