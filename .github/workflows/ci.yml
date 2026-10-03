@@ -16,5 +16,8 @@ jobs:
       # 零第三方运行时依赖：不需要 npm install 就能跑
       - name: 规格追溯门禁 + 全部测试
         run: npm run check
-      - name: 类型检查（没装 tsc 会自动跳过，不伪装通过）
+      # 仓库本身零依赖；类型检查需要 tsc + node 类型，只在 CI 里临时装（不进 package.json）
+      - name: 安装类型检查工具（临时，不写进仓库）
+        run: npm install --no-save typescript@5 @types/node@24
+      - name: 类型检查（strict + erasableSyntaxOnly + verbatimModuleSyntax）
         run: npm run typecheck

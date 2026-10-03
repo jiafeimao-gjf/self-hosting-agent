@@ -18,7 +18,7 @@
 | 验收标准 | **246** 条（`specs/*.md`，全部有稳定 ID） |
 | 覆盖情况 | **246 / 246** 全部有测试守着（`npm run trace` 门禁通过） |
 | 测试 | **262** 个，全绿（约 8s，零第三方依赖） |
-| 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
+| 类型检查 | `npm run typecheck` 全绿（tsc 5.9 / 6.0 均可；`--strict --erasableSyntaxOnly --verbatimModuleSyntax`） |
 | P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
 | P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
 | P2 已落地 | **可用客户端**：HTTP + SSE 服务、浏览器 Surface（对话 / 沙箱界面面板 / 检查器）、事件日志投影的多轮记忆、本机 Ollama 直连 |

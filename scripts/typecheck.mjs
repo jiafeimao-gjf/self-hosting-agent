@@ -5,6 +5,9 @@
  *   2. 只有别处的 tsc → 用临时配置 + 同级的 @types
  *   3. 都没有 → 明确说「跳过」，不伪装成通过
  *
+ * 关键补充：**有 tsc 但没有 node 类型，等于没有**。少了 @types/node，
+ * tsc 会对着 fetch / Buffer / node:test 报一堵假错误——那比跳过更糟，因为看起来像代码坏了。
+ *
  * 用法：node scripts/typecheck.mjs
  */
 import { execFileSync } from 'node:child_process';
@@ -50,13 +53,31 @@ function resolveTsc() {
   return null;
 }
 
-const tsc = resolveTsc();
-if (tsc === null) {
-  console.log('⚠ 未找到 tsc，跳过类型检查。');
+function resolveTypesRoot(bin) {
+  const candidates = [
+    path.join(root, 'node_modules', '@types'), // 本地装的最优先
+    path.resolve(path.dirname(bin), '..', '@types'), // 外部 tsc 同级的
+    path.resolve(path.dirname(bin), '..', '..', '@types'),
+  ];
+  for (const candidate of candidates) {
+    if (exists(path.join(candidate, 'node', 'package.json'))) return candidate;
+  }
+  return null;
+}
+
+function skip(reason) {
+  console.log(`⚠ ${reason}，跳过类型检查（这不等于通过）。`);
   console.log('  想要真跑一遍：npm i -D typescript @types/node && npm run typecheck');
   console.log('  或将已有 tsc 指给环境变量：TSC_PATH=/path/to/tsc npm run typecheck');
   process.exit(0);
 }
+
+const tsc = resolveTsc();
+if (tsc === null) skip('未找到 tsc');
+
+// 有 tsc 但没有 node 类型 = 报一堵假错误，比跳过更糟
+const typesRoot = resolveTypesRoot(tsc.bin);
+if (typesRoot === null) skip('未找到 @types/node');
 
 function run(args, label) {
   console.log(`▸ ${label}`);
@@ -73,8 +94,7 @@ if (tsc.kind === 'local') {
   process.exit(run(['--noEmit'], path.relative(root, tsc.bin)));
 }
 
-// 外部的 tsc 看不到本仓库的 @types（也没装），因此显式指向它旁边的 @types
-const typesRoot = path.resolve(path.dirname(tsc.bin), '..', '@types');
+// 外部的 tsc 看不到本仓库的 @types（也没装），因此显式指向上面解析到的那个
 const tempConfig = path.join(os.tmpdir(), `agent-client-tsconfig-${process.pid}.json`);
 const config = {
   compilerOptions: {
@@ -82,6 +102,9 @@ const config = {
     lib: ['es2023'],
     module: 'nodenext',
     moduleResolution: 'nodenext',
+    // 必须显式写 types：只给 typeRoots 时，临时配置（在项目之外）拿不到 node 全局，
+    // 会对着 fetch / Buffer / node:test 报一堵假错误 —— CI 上就是这样红的
+    types: ['node'],
     strict: true,
     noEmit: true,
     allowImportingTsExtensions: true,
@@ -89,7 +112,7 @@ const config = {
     verbatimModuleSyntax: true,
     isolatedModules: true,
     skipLibCheck: true,
-    ...(exists(typesRoot) ? { typeRoots: [typesRoot] } : {}),
+    typeRoots: [typesRoot],
   },
   include: [`${root}/src/**/*.ts`, `${root}/test/**/*.ts`, `${root}/scripts/**/*.mjs`],
 };
