@@ -263,6 +263,34 @@
       }
     },
     {
+      "title": "agent.delta",
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "t",
+        "agent",
+        "text"
+      ],
+      "properties": {
+        "t": {
+          "const": "agent.delta"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "seq": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "ts": {
+          "type": "string"
+        },
+        "text": {
+          "type": "string"
+        }
+      }
+    },
+    {
       "title": "agent.thinking",
       "type": "object",
       "additionalProperties": false,

@@ -191,6 +191,12 @@
 | **SET-015** | specs/015-model-settings.md | 多对话之前的全局 `<root>/settings.json` 在启动时**幂等迁移**进默认对话：目标已存在则不覆盖（用户后来配的优先），老文件保留不删（不带 Key 的东西宁可多留一份也不悄悄删）。 | `test/settings.test.ts` · 旧位置 <root>/settings.json 幂等迁移进默认对话，老文件保留 |
 | **SET-016** | specs/015-model-settings.md | 列出可用模型：`POST /api/models` 按候选配置（不写盘）拉取列表——OpenAI 兼容走 `{baseUrl}/models`、Anthropic 走 `{baseUrl}/v1/models` + `x-api-key`；返回 `{ok, models:[{id,label?}], count}`，条目有上限；超时 / 连不上 / 鉴权失败 / 响应格式不对都给出**可归因**的错误码，且**绝不回显 Key**。 | `test/settings.test.ts` · 列模型：两家协议各走各的端点，错误可归因且绝不回显 Key<br>`test/settings.test.ts` · 列模型的 HTTP 接口：候选配置不写盘，非法配置 400 |
 | **SET-017** | specs/015-model-settings.md | 客户端「列出模型」：一次点击即列出端点上的模型并渲染成可点选的候选（`datalist` 提供输入联想 + 候选按钮**点一下即切换**，走与保存完全相同的路径）；本地 Ollama 必须能列出本机模型并尽量带上体积/参数量；列表为空或失败都显示原因，且**不阻断手动输入模型名**。 | `test/client-settings-ui.test.ts` · 列模型：不要求先填模型名，候选可点选、全部转义、失败也不阻断手动输入 |
+| **STREAM-001** | specs/022-streaming.md | SSE 解析器：跨 chunk 切断、CRLF、多行 `data`、注释心跳、`[DONE]`、`flush()` 吐出最后一条；增量节流按时间合流且收尾必发。 | `test/stream.test.ts` · SSE 解析：跨 chunk 切断、CRLF、多行 data、注释心跳、[DONE]<br>`test/stream.test.ts` · 增量节流：按时间合流，收尾那一条一定发出去 |
+| **STREAM-002** | specs/022-streaming.md | 两家适配器都能流式解析：OpenAI 的 `delta.content` + 分批 `tool_calls`、Anthropic 的 `text_delta` + `input_json_delta` + `content_block_start`；请求体带 `stream: true`；**拼回来之后与非流式解析结果完全一致**。 | `test/stream.test.ts` · OpenAI 流式：文本增量 + 分批 tool_calls 拼接，结果与非流式完全一致<br>`test/stream.test.ts` · Anthropic 流式：text_delta 与 input_json_delta 拼回同一条 message |
+| **STREAM-003** | specs/022-streaming.md | 流式失败降级为非流式（并留下可查原因），而不是把整轮变成错误；超时不降级重试。 | `test/stream.test.ts` · 流式失败要降级为非流式，而不是把整轮搞死 |
+| **STREAM-004** | specs/022-streaming.md | Loop 把增量作为 `agent.delta` 帧外发（内容是累积全文），最终 `agent.thinking` 文本完整；**池子不把 `agent.delta` 写进事件日志**，其余帧照旧全记。 | `test/stream.test.ts` · Loop 把增量作为 agent.delta 帧外发，且最终文本仍然完整<br>`test/stream.test.ts` · 池子把 agent.delta 只转发、不落日志，其余帧照旧全记 |
+| **STREAM-005** | specs/022-streaming.md | 客户端：流式气泡**原地更新**（不 append）、文本一律 `textContent`/转义写入、最终消息到达时收掉气泡不重复、整体重建对话流时清掉气泡引用。 | `test/client-ui.test.ts` · 流式输出：原地更新气泡、纯文本写入、最终消息到达时替换（不重复） |
+| **STREAM-006** | specs/022-streaming.md | 确定性演示模型（`--model demo`）也走流式，因此整条流式链路可以在没有网络的情况下被确定性测试。 | `test/stream.test.ts` · 确定性演示模型也走流式：没有网络也能测整条链路 |
 | **SURF-001** | specs/006-surface.md | 组件表 `COMPONENT_SPECS` 是唯一真相来源：校验器、渲染器与 JSON Schema 均由它派生，新增组件只需改这一处。 | `test/surface.test.ts` · 组件表是唯一真相来源：校验 / 渲染 / schema 三处同步 |
 | **SURF-002** | specs/006-surface.md | `validateViewSpec` 接受全部已声明组件的合法 spec 并返回 `{ok:true}`，对任意输入（含 `null`、数组、标量、循环引用）永不抛异常。 | `test/surface.test.ts` · validateViewSpec 接受合法 spec，且对任意输入永不抛异常 |
 | **SURF-003** | specs/006-surface.md | 未知组件类型报 `UNKNOWN_COMPONENT`，与结构错误（`MISSING_FIELD` / `BAD_FIELD_TYPE` / `UNKNOWN_FIELD`）在错误码上可区分，且错误带 `path`。 | `test/surface.test.ts` · 未知组件类型与结构错误在错误码上可区分，且都带 path |
@@ -253,7 +259,7 @@
 
 ## 统计
 
-- 验收标准：**246** 条
-- 已覆盖：**246** 条
+- 验收标准：**252** 条
+- 已覆盖：**252** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

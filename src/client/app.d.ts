@@ -7,6 +7,16 @@ export interface ApplySurfaceInput {
   force?: boolean;
 }
 
+// ---------------------------------------------------------------------------
+// SPEC-022 流式输出
+// ---------------------------------------------------------------------------
+
+/** 流式气泡（`agent` + 累积全文）→ HTML；文本一律转义 */
+export function renderStreamingBubble(message: unknown): string;
+
+/** 一条对话消息：人类靠右、Agent / 思考靠左（UI-008） */
+export function renderMessage(message: unknown): string;
+
 /** 要不要把这份 html 写进沙箱：看的是「画没画上」，不是「内容变没变」 */
 export function shouldApplySurface(input: ApplySurfaceInput): boolean;
 

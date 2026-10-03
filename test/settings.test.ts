@@ -313,10 +313,16 @@ test('协议贯通到子进程：AGENT_PROTOCOL=anthropic 时走 /v1/messages', 
     handle.send({ t: 'human.message', text: '你好' });
     assert.match(String((await thinking).text), /Anthropic 适配器/);
 
-    assert.equal(fake.requests.length, 1);
-    assert.equal(fake.requests[0]?.url, '/v1/messages');
-    assert.equal(fake.requests[0]?.headers['x-api-key'], 'sk-ant-test');
-    assert.equal(typeof fake.requests[0]?.headers['anthropic-version'], 'string');
+    // SPEC-022：子进程现在会**先试流式**；这个假服务无视 stream 直接回普通 JSON，
+    // 于是适配器识别出「没返回事件流」并降级为非流式重试 —— 所以会有两次请求。
+    assert.ok(fake.requests.length >= 1, '至少要打一次');
+    for (const request of fake.requests) {
+      assert.equal(request.url, '/v1/messages');
+      assert.equal(request.headers['x-api-key'], 'sk-ant-test');
+      assert.equal(typeof request.headers['anthropic-version'], 'string');
+    }
+    const last = fake.requests.at(-1);
+    assert.equal(JSON.parse(String(last?.body ?? '{}')).stream, undefined, '降级那一次不带 stream');
 
     const body = JSON.parse(fake.requests[0]?.body ?? '{}') as { model?: string; system?: string };
     assert.equal(body.model, 'claude-test');

@@ -11,7 +11,17 @@
  */
 import { createWireNameMap } from './wire-names.ts';
 import type { WireNameMap } from './wire-names.ts';
-import type { ContextItem, ModelInput, ModelOutput, ModelPort, ToolCall, ToolSpec, UiPatch } from './loop.ts';
+import type {
+  ContextItem,
+  ModelInput,
+  ModelOutput,
+  ModelPort,
+  ModelStepOptions,
+  ToolCall,
+  ToolSpec,
+  UiPatch,
+} from './loop.ts';
+import { createDeltaThrottle, createSseParser, isDoneSentinel } from './sse.ts';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_RETRIES = 2;
@@ -27,6 +37,8 @@ export type HttpModelErrorKind =
   | 'network'
   | 'timeout'
   | 'bad_response'
+  /** SPEC-022：端点没返回事件流（网关无视 stream:true），调用方应退回非流式 */
+  | 'not_stream'
   | 'bad_arguments'
   | 'bad_ui_patch';
 
@@ -87,6 +99,8 @@ export interface HttpModelOptions {
   retryBaseDelayMs?: number;
   /** 命中该名字的工具调用转成 uiPatches，不进入 toolCalls */
   uiToolName?: string;
+  /** 流式失败降级时的回调（排障用：谁把 stream 拒了） */
+  onStreamFallback?: (reason: string) => void;
 }
 
 export function createHttpModel(options: HttpModelOptions): ModelPort {
@@ -100,13 +114,41 @@ export function createHttpModel(options: HttpModelOptions): ModelPort {
   const url = `${options.baseUrl.replace(/\/+$/, '')}/chat/completions`;
 
   return {
-    async step(input: ModelInput): Promise<ModelOutput> {
+    async step(input: ModelInput, stepOptions: ModelStepOptions = {}): Promise<ModelOutput> {
       // 一次调用内工具集合是固定的：出网/回程共用同一张名字映射
       const names = createWireNameMap(input.tools.map((tool) => tool.name));
-      const payload = JSON.stringify(buildBody(options, input, names));
+      const wantsStream = typeof stepOptions.onDelta === 'function';
+
+      const body = (stream: boolean): string =>
+        JSON.stringify({
+          ...(buildBody(options, input, names) as Record<string, unknown>),
+          ...(stream ? { stream: true } : {}),
+        });
+
       for (let attempt = 0; ; attempt += 1) {
         try {
-          return await requestOnce(doFetch, url, options.apiKey, payload, timeoutMs, options.uiToolName, names);
+          if (wantsStream) {
+            try {
+              return await requestStream(
+                doFetch,
+                url,
+                options.apiKey,
+                body(true),
+                timeoutMs,
+                options.uiToolName,
+                names,
+                stepOptions.onDelta as (text: string) => void,
+              );
+            } catch (err) {
+              // SPEC-022：流式失败（网关不认 stream、中途断流）不能把整轮搞死 ——
+              // 退回非流式重来一次，宁可慢一点，也不要「有流式就没答案」。
+              // 但超时就别重试了：那只会让用户多等一个超时。
+              if (err instanceof HttpModelError && err.kind === 'timeout') throw err;
+              streamFallbacks.push(err instanceof Error ? err.message : String(err));
+              if (typeof options.onStreamFallback === 'function') options.onStreamFallback(streamFallbacks.at(-1) as string);
+            }
+          }
+          return await requestOnce(doFetch, url, options.apiKey, body(false), timeoutMs, options.uiToolName, names);
         } catch (err) {
           // 只有排得上号、且还有重试余额的失败才重试；其余（含 4xx、解析错误）立即上抛
           if (!(err instanceof HttpModelError) || attempt >= maxRetries || !isRetriable(err)) throw err;
@@ -118,6 +160,162 @@ export function createHttpModel(options: HttpModelOptions): ModelPort {
 }
 
 // ── 请求 ──
+
+/** 流式尝试的失败原因，供上层记录（不改动返回值形状） */
+const streamFallbacks: string[] = [];
+
+/**
+ * SPEC-022：OpenAI 兼容的流式请求。
+ *
+ * `data:` 里是增量 JSON，文本在 `choices[0].delta.content`，工具调用在
+ * `choices[0].delta.tool_calls`（**分批到达**，按 index 拼 name 与 arguments）。
+ * 收尾约定是 `data: [DONE]`。
+ */
+async function requestStream(
+  doFetch: typeof fetch,
+  url: string,
+  apiKey: string,
+  payload: string,
+  timeoutMs: number,
+  uiToolName: string | undefined,
+  names: WireNameMap,
+  onDelta: (text: string) => void,
+): Promise<ModelOutput> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const throttle = createDeltaThrottle(onDelta);
+
+  try {
+    let response: Response;
+    try {
+      response = await doFetch(url, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', authorization: `Bearer ${apiKey}` },
+        body: payload,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      throw transportError(err, controller.signal.aborted, url, timeoutMs);
+    }
+
+    if (!response.ok) {
+      const raw = await response.text().catch(() => '');
+      const snippet = snippetOf(raw);
+      throw new HttpModelError(
+        `HTTP 模型流式请求失败：HTTP ${response.status} ${response.statusText}（POST ${url}）${snippet === '' ? '' : `；响应片段：${snippet}`}`,
+        { kind: 'http', status: response.status, bodySnippet: snippet },
+      );
+    }
+    // 有些网关无视 `stream: true`，直接回一个普通 JSON（200，不是错误）。
+    // 这时候当成 SSE 解析只会得到一个空答案 —— 必须识别出来并走非流式解析。
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('text/event-stream')) {
+      const raw = await response.text().catch(() => '');
+      throw new HttpModelError(
+        `端点没有返回事件流（content-type: ${contentType || '未知'}），改走非流式`,
+        { kind: 'not_stream' },
+      );
+    }
+    if (response.body === null) {
+      throw new HttpModelError('流式响应没有 body', { kind: 'bad_response' });
+    }
+
+    let text = '';
+    const rawCalls = new Map<number, { id: string; name: string; args: string }>();
+    let failure: HttpModelError | undefined;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = createSseParser((event) => {
+      if (isDoneSentinel(event.data)) return;
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        return; // 流里混进坏块就跳过：不能因为一条脏数据把整轮答案丢掉
+      }
+      const record = parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+      const choices = Array.isArray(record.choices) ? record.choices : [];
+      const first = choices[0];
+      if (first === null || typeof first !== 'object') return;
+
+      // 有些网关会在流里夹一条 error
+      const errorField = (first as Record<string, unknown>).error ?? record.error;
+      if (errorField !== undefined) {
+        failure = new HttpModelError(`流式响应报错：${JSON.stringify(errorField).slice(0, 200)}`, { kind: 'bad_response' });
+        return;
+      }
+
+      const delta = (first as Record<string, unknown>).delta;
+      if (delta === null || typeof delta !== 'object') return;
+      const deltaRecord = delta as Record<string, unknown>;
+
+      if (typeof deltaRecord.content === 'string' && deltaRecord.content !== '') {
+        text += deltaRecord.content;
+        throttle.push(text);
+      }
+
+      const calls = Array.isArray(deltaRecord.tool_calls) ? deltaRecord.tool_calls : [];
+      for (const entry of calls) {
+        if (entry === null || typeof entry !== 'object') continue;
+        const callRecord = entry as Record<string, unknown>;
+        const index = typeof callRecord.index === 'number' ? callRecord.index : rawCalls.size;
+        const current = rawCalls.get(index) ?? { id: '', name: '', args: '' };
+        if (typeof callRecord.id === 'string' && callRecord.id !== '') current.id = callRecord.id;
+        const fn = callRecord.function;
+        if (fn !== null && typeof fn === 'object') {
+          const fnRecord = fn as Record<string, unknown>;
+          if (typeof fnRecord.name === 'string' && fnRecord.name !== '') current.name += fnRecord.name;
+          if (typeof fnRecord.arguments === 'string') current.args += fnRecord.arguments;
+        }
+        rawCalls.set(index, current);
+      }
+    });
+
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        parser.push(decoder.decode(value, { stream: true }));
+      }
+      parser.push(decoder.decode());
+      parser.flush();
+    } catch (err) {
+      throw transportError(err, controller.signal.aborted, url, timeoutMs);
+    }
+
+    if (failure !== undefined) throw failure;
+
+    // 与实体响应同一条解析路径：把流拼回来的东西喂给 parseCompletion，保证两条路结果一致
+    const assembled: Record<string, unknown> = {
+      choices: [
+        {
+          message: {
+            role: 'assistant',
+            content: text,
+            ...(rawCalls.size === 0
+              ? {}
+              : {
+                  tool_calls: [...rawCalls.entries()]
+                    .sort((a, b) => a[0] - b[0])
+                    .map(([index, call]) => ({
+                      id: call.id === '' ? `call_${index}` : call.id,
+                      type: 'function',
+                      function: { name: call.name, arguments: call.args === '' ? '{}' : call.args },
+                    })),
+                }),
+          },
+        },
+      ],
+    };
+
+    const output = parseCompletion(JSON.stringify(assembled), url, uiToolName, names);
+    throttle.finish(text);
+    return output;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function requestOnce(
   doFetch: typeof fetch,

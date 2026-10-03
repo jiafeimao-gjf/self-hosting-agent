@@ -13,8 +13,17 @@
  *   3. 离线可测：零第三方依赖，fetchImpl 可注入，测试用 node:http 本地假服务。
  */
 import { createWireNameMap } from './wire-names.ts';
+import { createDeltaThrottle, createSseParser } from './sse.ts';
 import type { WireNameMap } from './wire-names.ts';
-import type { ContextItem, ModelInput, ModelOutput, ModelPort, ToolCall, ToolSpec } from './loop.ts';
+import type {
+  ContextItem,
+  ModelInput,
+  ModelOutput,
+  ModelPort,
+  ModelStepOptions,
+  ToolCall,
+  ToolSpec,
+} from './loop.ts';
 
 export const DEFAULT_TIMEOUT_MS = 30_000;
 export const DEFAULT_MAX_RETRIES = 2;
@@ -26,7 +35,13 @@ export const DEFAULT_ANTHROPIC_VERSION = '2023-06-01';
 /** 响应片段最多带这么多字符进错误对象：够排障，又不至于把日志撑爆 */
 const BODY_SNIPPET_LIMIT = 500;
 
-export type AnthropicModelErrorKind = 'http' | 'network' | 'timeout' | 'bad_response';
+export type AnthropicModelErrorKind =
+  | 'http'
+  | 'network'
+  | 'timeout'
+  | 'bad_response'
+  /** SPEC-022：端点没返回事件流（网关无视 stream:true），调用方应退回非流式 */
+  | 'not_stream';
 
 export interface AnthropicModelErrorOptions {
   kind: AnthropicModelErrorKind;
@@ -67,6 +82,8 @@ export class AnthropicModelTimeoutError extends AnthropicModelError {
 }
 
 export interface AnthropicModelOptions {
+  /** 流式失败降级时的回调（排障用：谁把 stream 拒了） */
+  onStreamFallback?: (reason: string) => void;
   /** 例如 https://api.anthropic.com；尾部斜杠会被归一化 */
   baseUrl: string;
   apiKey: string;
@@ -98,13 +115,39 @@ export function createAnthropicModel(options: AnthropicModelOptions): ModelPort 
   const url = `${options.baseUrl.replace(/\/+$/, '')}/v1/messages`;
 
   return {
-    async step(input: ModelInput): Promise<ModelOutput> {
+    async step(input: ModelInput, stepOptions: ModelStepOptions = {}): Promise<ModelOutput> {
       // 工具名出网前必须压成 [a-zA-Z0-9_-]（Anthropic 同样拒绝点号）
       const names = createWireNameMap(input.tools.map((tool) => tool.name));
-      const payload = JSON.stringify(buildBody(options, input, names));
+      const wantsStream = typeof stepOptions.onDelta === 'function';
+
+      const body = (stream: boolean): string =>
+        JSON.stringify({
+          ...(buildBody(options, input, names) as Record<string, unknown>),
+          ...(stream ? { stream: true } : {}),
+        });
+
       for (let attempt = 0; ; attempt += 1) {
         try {
-          return await requestOnce(doFetch, url, options, payload, timeoutMs, names);
+          if (wantsStream) {
+            try {
+              return await requestStream(
+                doFetch,
+                url,
+                options,
+                body(true),
+                timeoutMs,
+                names,
+                stepOptions.onDelta as (text: string) => void,
+              );
+            } catch (err) {
+              // SPEC-022：流式失败退回非流式（超时除外：再试一次只是让用户多等一个超时）
+              if (err instanceof AnthropicModelError && err.kind === 'timeout') throw err;
+              if (typeof options.onStreamFallback === 'function') {
+                options.onStreamFallback(err instanceof Error ? err.message : String(err));
+              }
+            }
+          }
+          return await requestOnce(doFetch, url, options, body(false), timeoutMs, names);
         } catch (err) {
           // 只有排得上号、且还有重试余额的失败才重试；其余（含 4xx、解析错误）立即上抛
           if (!(err instanceof AnthropicModelError) || attempt >= maxRetries || !isRetriable(err)) throw err;
@@ -116,6 +159,182 @@ export function createAnthropicModel(options: AnthropicModelOptions): ModelPort 
 }
 
 // ── 请求 ──
+
+/**
+ * SPEC-022：Anthropic 的流式请求。
+ *
+ * 事件比 OpenAI 啰嗦得多，但我们真正关心的只有四类：
+ *   content_block_delta(text_delta)        → 文本增量
+ *   content_block_delta(input_json_delta)  → 工具入参增量（按 index 拼）
+ *   content_block_start(tool_use)          → 工具名与 id
+ *   message_delta / message_stop           → 收尾与 stop_reason
+ */
+async function requestStream(
+  doFetch: typeof fetch,
+  url: string,
+  options: AnthropicModelOptions,
+  payload: string,
+  timeoutMs: number,
+  names: WireNameMap,
+  onDelta: (text: string) => void,
+): Promise<ModelOutput> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  const throttle = createDeltaThrottle(onDelta);
+
+  try {
+    let response: Response;
+    try {
+      response = await doFetch(url, {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-api-key': options.apiKey,
+          'anthropic-version': options.anthropicVersion ?? DEFAULT_ANTHROPIC_VERSION,
+        },
+        body: payload,
+        signal: controller.signal,
+      });
+    } catch (err) {
+      throw transportError(err, controller.signal.aborted, url, timeoutMs);
+    }
+
+    if (!response.ok) {
+      const raw = await response.text().catch(() => '');
+      const snippet = snippetOf(raw);
+      throw new AnthropicModelError(
+        `Anthropic 流式请求失败：HTTP ${response.status} ${response.statusText}（POST ${url}）${snippet === '' ? '' : `；响应片段：${snippet}`}`,
+        { kind: 'http', status: response.status, bodySnippet: snippet },
+      );
+    }
+    // 同上：网关不认 stream 时会回普通 JSON，识别出来走非流式
+    const contentType = response.headers.get('content-type') ?? '';
+    if (!contentType.includes('text/event-stream')) {
+      throw new AnthropicModelError(
+        `端点没有返回事件流（content-type: ${contentType || '未知'}），改走非流式`,
+        { kind: 'not_stream' },
+      );
+    }
+    if (response.body === null) {
+      throw new AnthropicModelError('流式响应没有 body', { kind: 'bad_response' });
+    }
+
+    let text = '';
+    const blocks = new Map<number, { type: string; id: string; name: string; json: string }>();
+    let usage = { input_tokens: 0, output_tokens: 0 };
+    let stopReason = '';
+    let failure: AnthropicModelError | undefined;
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder();
+    const parser = createSseParser((event) => {
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(event.data);
+      } catch {
+        return; // 坏块跳过
+      }
+      const record = parsed !== null && typeof parsed === 'object' ? (parsed as Record<string, unknown>) : {};
+      const type = typeof record.type === 'string' ? record.type : event.event ?? '';
+
+      if (type === 'error') {
+        failure = new AnthropicModelError(`流式响应报错：${JSON.stringify(record.error ?? record).slice(0, 200)}`, {
+          kind: 'bad_response',
+        });
+        return;
+      }
+
+      if (type === 'content_block_start') {
+        const index = typeof record.index === 'number' ? record.index : blocks.size;
+        const block = record.content_block;
+        const blockRecord = block !== null && typeof block === 'object' ? (block as Record<string, unknown>) : {};
+        blocks.set(index, {
+          type: typeof blockRecord.type === 'string' ? blockRecord.type : 'unknown',
+          id: typeof blockRecord.id === 'string' ? blockRecord.id : '',
+          name: typeof blockRecord.name === 'string' ? blockRecord.name : '',
+          json: '',
+        });
+        return;
+      }
+
+      if (type === 'content_block_delta') {
+        const index = typeof record.index === 'number' ? record.index : 0;
+        const delta = record.delta;
+        const deltaRecord = delta !== null && typeof delta === 'object' ? (delta as Record<string, unknown>) : {};
+        if (deltaRecord.type === 'text_delta' && typeof deltaRecord.text === 'string') {
+          text += deltaRecord.text;
+          throttle.push(text);
+          return;
+        }
+        if (deltaRecord.type === 'input_json_delta' && typeof deltaRecord.partial_json === 'string') {
+          const current = blocks.get(index) ?? { type: 'tool_use', id: '', name: '', json: '' };
+          current.json += deltaRecord.partial_json;
+          blocks.set(index, current);
+        }
+        return;
+      }
+
+      if (type === 'message_delta') {
+        const delta = record.delta;
+        const deltaRecord = delta !== null && typeof delta === 'object' ? (delta as Record<string, unknown>) : {};
+        if (typeof deltaRecord.stop_reason === 'string') stopReason = deltaRecord.stop_reason;
+        const usageField = record.usage;
+        if (usageField !== null && typeof usageField === 'object') {
+          const usageRecord = usageField as Record<string, unknown>;
+          if (typeof usageRecord.output_tokens === 'number') usage.output_tokens = usageRecord.output_tokens;
+        }
+        return;
+      }
+
+      if (type === 'message_start') {
+        const message = record.message;
+        if (message !== null && typeof message === 'object') {
+          const messageRecord = message as Record<string, unknown>;
+          const usageField = messageRecord.usage;
+          if (usageField !== null && typeof usageField === 'object') {
+            const usageRecord = usageField as Record<string, unknown>;
+            if (typeof usageRecord.input_tokens === 'number') usage.input_tokens = usageRecord.input_tokens;
+          }
+        }
+      }
+    });
+
+    try {
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        parser.push(decoder.decode(value, { stream: true }));
+      }
+      parser.push(decoder.decode());
+      parser.flush();
+    } catch (err) {
+      throw transportError(err, controller.signal.aborted, url, timeoutMs);
+    }
+
+    if (failure !== undefined) throw failure;
+
+    // 与实体响应同一条解析路径：把流拼回 Anthropic 的 message 形状
+    const content: Array<Record<string, unknown>> = [];
+    if (text !== '') content.push({ type: 'text', text });
+    for (const [, block] of [...blocks.entries()].sort((a, b) => a[0] - b[0])) {
+      if (block.type !== 'tool_use') continue;
+      let input: unknown = {};
+      try {
+        input = block.json === '' ? {} : JSON.parse(block.json);
+      } catch {
+        throw new AnthropicModelError(`工具入参不是合法 JSON：${block.json.slice(0, 120)}`, { kind: 'bad_response' });
+      }
+      content.push({ type: 'tool_use', id: block.id === '' ? 'toolu_0' : block.id, name: block.name, input });
+    }
+
+    const assembled = { content, usage, ...(stopReason === '' ? {} : { stop_reason: stopReason }) };
+    const output = parseMessage(JSON.stringify(assembled), url, names);
+    throttle.finish(text);
+    return output;
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 async function requestOnce(
   doFetch: typeof fetch,

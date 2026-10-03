@@ -1396,3 +1396,35 @@ body {
   color: var(--text-muted);
   font-size: 11.5px;
 }
+
+/* SPEC-022：流式气泡（正在写） */
+.msg-streaming {
+  align-self: flex-start;
+  border-left: 2px dashed var(--violet);
+  opacity: 0.92;
+}
+
+.msg-streaming .msg-text {
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.stream-caret {
+  display: inline-block;
+  width: 7px;
+  height: 1em;
+  margin-left: 3px;
+  vertical-align: text-bottom;
+  background: var(--violet);
+  animation: stream-blink 1s step-end infinite;
+}
+
+@keyframes stream-blink {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.15;
+  }
+}

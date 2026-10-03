@@ -91,8 +91,16 @@ export interface ModelInput {
   tools: ToolSpec[];
 }
 
+/**
+ * SPEC-022 流式输出：`onDelta` 收到的是**累积到现在的全文**，不是分片。
+ * 幂等是有意为之——丢一条、重一条、乱序一条都不会把界面上的文字搞乱。
+ */
+export interface ModelStepOptions {
+  onDelta?: (text: string) => void;
+}
+
 export interface ModelPort {
-  step(input: ModelInput): Promise<ModelOutput>;
+  step(input: ModelInput, options?: ModelStepOptions): Promise<ModelOutput>;
 }
 
 export interface UiGuard {
@@ -287,14 +295,26 @@ export class AgentLoop {
 
       // ── Step 2 模型推理 ──
       let output: ModelOutput;
+      let streamed = '';
       try {
-        output = await model.step({ agentId, turn, context, tools });
+        output = await model.step(
+          { agentId, turn, context, tools },
+          {
+            // 流式增量：只外发，不进事件日志（它会被最终的 agent.thinking 取代，
+            // 一条一条记账只会把日志淹没）
+            onDelta: (text) => {
+              streamed = text;
+              emit({ t: 'agent.delta', agent: agentId, text });
+            },
+          },
+        );
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
         record({ type: 'loop.error', agent: agentId, turn, message });
         emit({ t: 'loop.error', agent: agentId, message, ...(err instanceof Error && err.stack ? { stack: err.stack } : {}) });
         return finish('error', message);
       }
+      void streamed;
       const pendingToolCalls = output.toolCalls ?? [];
       if ((output.text !== undefined && output.text !== '') || pendingToolCalls.length > 0) {
         if (output.text !== undefined && output.text !== '') {

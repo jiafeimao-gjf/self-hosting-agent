@@ -48,6 +48,8 @@ interface AppModule {
   summarizeToolCall(call: unknown): { agent: string; name: string; detail: string };
   renderToolCallLine(call: unknown, result: unknown): string;
   renderMessage(message: unknown): string;
+  /** SPEC-022：流式气泡 */
+  renderStreamingBubble(message: unknown): string;
   renderTimelineItem(event: unknown): string;
   renderAgentRow(agent: unknown): string;
   renderTaskRow(task: unknown): string;
@@ -457,4 +459,32 @@ test('检查器可最小化：只切属性、不刷页面，状态记在 localSt
   assert.match(indexHtml, /id="tasks"/);
   assert.match(indexHtml, /id="timeline"/);
   assert.match(indexHtml, /id="sources"/);
+});
+
+// @spec STREAM-005
+test('流式输出：原地更新气泡、纯文本写入、最终消息到达时替换（不重复）', () => {
+  // 气泡内容全部转义，且文本装在 .msg-text 里（写入时只动这一个节点）
+  const html = app.renderStreamingBubble({ agent: 'lead', text: '<img src=x onerror=alert(1)>' });
+  assert.match(html, /lead · 正在写/);
+  assert.match(html, /class="msg-text"/);
+  assert.equal(html.includes('<img src=x'), false, '流式文本必须转义');
+
+  const appSource = readClient('app.js');
+  // 累积全文 → 原地替换（不 append，避免几十上百条增量刷屏）
+  assert.match(appSource, /function applyDelta\(/);
+  assert.match(appSource, /body\.textContent = text/);
+  assert.match(appSource, /state\.deltas\.get\(key\)/);
+  // 最终消息到达时先收掉气泡
+  assert.match(appSource, /clearDelta\(agent\)/);
+  // 整体重建对话流时也要清掉气泡引用（否则留下指向已卸载节点的幽灵）
+  assert.match(appSource, /function clearAllDeltas\(/);
+  assert.match(appSource, /clearAllDeltas\(\);/);
+  // 帧处理：agent.delta 单独一条分支，且不进对话流之外的地方
+  assert.match(appSource, /type === 'agent\.delta'/);
+  assert.equal(appSource.includes('location.reload'), false);
+
+  // 样式：虚线边框 + 闪烁光标，一眼看出「还没写完」
+  assert.match(styleCss, /\.msg-streaming/);
+  assert.match(styleCss, /\.stream-caret/);
+  assert.match(styleCss, /@keyframes stream-blink/);
 });

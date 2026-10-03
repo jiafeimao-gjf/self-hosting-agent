@@ -79,7 +79,12 @@ export class AgentProcess extends EventEmitter {
 
     this.#channel = new FrameChannel({ input: stdout, output: stdin });
     this.#channel.on('frame', (frame: Frame, raw: string) => {
-      options.log?.append({ type: 'agent.frame', agent: this.agentId, pid: this.pid, frame, raw });
+      // SPEC-022：`agent.delta` 是**瞬态**流式增量（累积全文，一次回答可能几十上百条），
+      // 它会被最终的 agent.thinking 完整取代。逐条记账只会把事件日志淹没，
+      // 所以这一种帧只转发、不落日志 —— 其余每一帧照旧全记（KERN-009）。
+      if (frame.t !== 'agent.delta') {
+        options.log?.append({ type: 'agent.frame', agent: this.agentId, pid: this.pid, frame, raw });
+      }
       this.emit('frame', frame);
     });
     this.#channel.on('error', (error: { code: string; message: string }) => {

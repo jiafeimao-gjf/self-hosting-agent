@@ -230,8 +230,11 @@ test('模型端口可切换：AGENT_MODEL=http 时子进程走真 HTTP 端口（
 
     assert.match(String((await thinking).text), /真模型端口/);
     assert.equal((await done).reason, 'completed');
-    assert.equal(requests.length, 1, '应当真的发了 HTTP 请求');
-    assert.match(requests[0] as string, /fake-model/);
+    // SPEC-022：子进程先试流式；这个假服务回的是普通 JSON（无视 stream:true），
+    // 适配器识别出「没返回事件流」后降级为非流式 —— 所以是两次请求，且都打到了同一个端点
+    assert.ok(requests.length >= 1, '应当真的发了 HTTP 请求');
+    for (const body of requests) assert.match(body, /fake-model/);
+    assert.equal(JSON.parse(requests.at(-1) as string).stream, undefined, '降级那一次不带 stream');
   } finally {
     await pool.shutdown();
     server.close();

@@ -12,6 +12,7 @@ import { FrameChannel } from '../protocol/channel.ts';
 import { AgentLoop, DEFAULT_HOST_TOOL_TIMEOUT_MS, defineHostTool, defineTool } from '../loop/loop.ts';
 import type { Frame } from '../protocol/frames.ts';
 import type {
+  ContextItem,
   HostBridgePort,
   HostToolReply,
   InboxMessage,
@@ -20,7 +21,7 @@ import type {
   ToolSpec,
 } from '../loop/loop.ts';
 import { EventLog } from '../eventlog/log.ts';
-import { scriptedModel } from '../loop/fake-model.ts';
+import { scriptedModel, streamOut } from '../loop/fake-model.ts';
 import { createHttpModel } from '../loop/http-model.ts';
 import { createAnthropicModel } from '../loop/anthropic-model.ts';
 import { projectConversation } from './conversation.ts';
@@ -60,7 +61,16 @@ function demoModel(): ModelPort {
   let themeTweaked = false;
 
   return {
-    async step({ turn, context }) {
+    async step({ turn, context }, stepOptions = {}) {
+      const output = await demoStep(turn, context);
+      // SPEC-022：确定性演示模型也走流式，`--model demo` 就能看到逐字输出
+      streamOut(output, stepOptions);
+      return output;
+    },
+  };
+
+  async function demoStep(turn: number, context: ContextItem[]): Promise<ModelOutput> {
+    {
       const lastHuman = [...context].reverse().find((item) => item.role === 'human')?.text ?? '（没有需求）';
 
       // 自举演示：人类说「换配色」，Agent 就去改客户端自己的代码（改完要过自检才留得下）
@@ -92,7 +102,7 @@ function demoModel(): ModelPort {
           text: `收到：${lastHuman}。先看一眼预算数据。`,
           toolCalls: [{ id: 'c1', name: 'budget', args: { range: 'today' } }],
           usage: { tokens: 42 },
-        };
+        } satisfies ModelOutput;
       }
       // 用人类这句话算一个稳定的数，让每次对话界面都有变化（演示用）
       const seed = [...lastHuman].reduce((sum, char) => sum + char.charCodeAt(0), 0);
@@ -124,9 +134,9 @@ function demoModel(): ModelPort {
         uiPatches: [{ scope: 'surface.main', op: 'upsert', spec: panel }],
         done: true,
         usage: { tokens: 58 },
-      };
-    },
-  };
+      } satisfies ModelOutput;
+    }
+  }
 }
 
 const args = parseArgs(process.argv.slice(2));

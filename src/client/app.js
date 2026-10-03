@@ -155,6 +155,20 @@ export function renderMessage(message) {
   return `<li class="msg msg-${escapeHtml(kind)}"><span class="meta">${escapeHtml(label)}</span>${escapeHtml(textOf(item.text))}</li>`;
 }
 
+/**
+ * SPEC-022：流式气泡。与正式消息同款配色，但带虚线边框与一根光标，
+ * 让人类一眼看出「这句话还没写完」。`text` 一律转义。
+ */
+export function renderStreamingBubble(message) {
+  const item = isRecord(message) ? message : {};
+  const agent = textOf(item.agent) || 'agent';
+  return (
+    `<span class="meta">${escapeHtml(agent)} · 正在写</span>` +
+    `<span class="msg-text">${escapeHtml(textOf(item.text))}</span>` +
+    '<span class="stream-caret" aria-hidden="true"></span>'
+  );
+}
+
 function formatTime(ts) {
   const value = textOf(ts);
   if (value.length === 0) return '';
@@ -499,6 +513,8 @@ function boot() {
     painted: false,
     /** 已发出但还没回填结果的 tool.call：id → { call, node } */
     tools: new Map(),
+    /** SPEC-022：每个 Agent 一条流式气泡（agent → li 节点） */
+    deltas: new Map(),
     /** 忙碌态：真模型一轮可能几十秒，人类必须看得出「它在干活、等了多久」 */
     busySince: null,
     busyTimer: null,
@@ -729,6 +745,8 @@ function boot() {
 
     // 对话流按服务端的「完整对话投影」整体重建：它同时包含人类消息与 Agent 说过的话。
     // 早先这里只投影邮件类消息，于是每轮结束时会把 Agent 的回复冲掉 —— 现在两边同源。
+    // 整体重建会把流式气泡一起冲掉：同时清掉引用，免得留下指向已卸载节点的幽灵
+    clearAllDeltas();
     dom.messages.innerHTML = projectMessages(snapshot.messages).map(renderMessage).join('');
     dom.messages.scrollTop = dom.messages.scrollHeight;
 
@@ -923,7 +941,16 @@ function boot() {
     const agent = textOf(frame.agent ?? envelope.agent) || 'agent';
     const type = textOf(frame.t);
 
+    if (type === 'agent.delta') {
+      // SPEC-022：`text` 是**累积全文**（不是分片），所以这里直接原地替换，
+      // 丢一条、重一条、乱序一条都不会把界面上的文字搞乱。
+      applyDelta(agent, textOf(frame.text));
+      pushTimeline({ type: 'frame.agent.delta', agent, ts: frame.ts });
+      return;
+    }
     if (type === 'agent.thinking') {
+      // 最终消息到了：先把流式气泡收掉，再按正式消息渲染（否则会重复一份）
+      clearDelta(agent);
       appendMessage(renderMessage({ kind: 'thinking', agent, text: frame.text }));
     } else if (type === 'tool.call') {
       const id = textOf(frame.id);
@@ -944,6 +971,40 @@ function boot() {
     }
 
     pushTimeline({ type: type.length > 0 ? `frame.${type}` : 'frame.未知', agent, ts: frame.ts });
+  }
+
+  /**
+   * 流式气泡：每个 Agent 一条，原地更新文本。
+   * 刻意不 appendMessage —— 一个回答几十上百条增量，append 会刷屏也会把对话流撑爆。
+   */
+  function applyDelta(agent, text) {
+    if (text === '') return;
+    const key = agent === '' ? 'agent' : agent;
+    let node = state.deltas.get(key);
+    if (node === undefined || !node.isConnected) {
+      node = document.createElement('li');
+      node.className = 'msg msg-streaming';
+      node.innerHTML = renderStreamingBubble({ agent: key, text });
+      dom.messages.append(node);
+      state.deltas.set(key, node);
+    }
+    const body = node.querySelector('.msg-text');
+    if (body !== null) body.textContent = text; // 纯文本写入，绝不 innerHTML
+    dom.messages.scrollTop = dom.messages.scrollHeight;
+  }
+
+  function clearDelta(agent) {
+    const key = agent === '' ? 'agent' : agent;
+    const node = state.deltas.get(key);
+    if (node !== undefined) {
+      node.remove();
+      state.deltas.delete(key);
+    }
+  }
+
+  function clearAllDeltas() {
+    for (const node of state.deltas.values()) node.remove();
+    state.deltas.clear();
   }
 
   function applyDocument(payload) {

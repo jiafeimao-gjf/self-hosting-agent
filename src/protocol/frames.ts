@@ -63,6 +63,13 @@ export const FRAME_SPECS = {
     required: { id: 'string', ok: 'boolean' },
     optional: { result: 'string', error: 'string' },
   },
+  'agent.delta': {
+    direction: 'out',
+    // SPEC-022：流式增量。`text` 是**累积全文**（幂等），不是分片。
+    // 它是瞬态提示，会被最终的 agent.thinking 取代，因此不写进事件日志。
+    required: { agent: 'string', text: 'string' },
+    optional: {},
+  },
   'agent.thinking': {
     direction: 'out',
     required: { text: 'string' },

@@ -8,7 +8,10 @@ import { createAnthropicModel } from '../loop/anthropic-model.ts';
 import type { ModelPort } from '../loop/loop.ts';
 import type { ModelSettings } from './settings.ts';
 
-export function createModelPort(settings: ModelSettings, options: { timeoutMs?: number } = {}): ModelPort {
+export function createModelPort(
+  settings: ModelSettings,
+  options: { timeoutMs?: number; onStreamFallback?: (reason: string) => void } = {},
+): ModelPort {
   const timeoutMs = options.timeoutMs ?? settings.timeoutMs ?? 60_000;
 
   if (settings.protocol === 'anthropic') {
@@ -19,6 +22,7 @@ export function createModelPort(settings: ModelSettings, options: { timeoutMs?: 
       timeoutMs,
       ...(settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens }),
       ...(settings.temperature === undefined ? {} : { temperature: settings.temperature }),
+      ...(options.onStreamFallback === undefined ? {} : { onStreamFallback: options.onStreamFallback }),
     });
   }
 
@@ -29,5 +33,6 @@ export function createModelPort(settings: ModelSettings, options: { timeoutMs?: 
     timeoutMs,
     ...(settings.maxTokens === undefined ? {} : { maxTokens: settings.maxTokens }),
     ...(settings.temperature === undefined ? {} : { temperature: settings.temperature }),
+    ...(options.onStreamFallback === undefined ? {} : { onStreamFallback: options.onStreamFallback }),
   });
 }
