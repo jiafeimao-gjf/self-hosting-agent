@@ -17,6 +17,7 @@ import { ClientSession } from './server/session.ts';
 import type { ModelSettings } from './server/settings.ts';
 import { startServer } from './server/http-server.ts';
 import { ConversationRegistry } from './server/conversations.ts';
+import { migrateLegacySettings } from './server/settings.ts';
 import { ViewDocument } from './surface/document.ts';
 import { SurfaceIngest } from './surface/ingest.ts';
 import { validateViewSpec } from './surface/viewspec.ts';
@@ -279,6 +280,9 @@ async function runServe(argv: string[]): Promise<number> {
     ...(args['log-level'] === undefined ? {} : { logLevel: args['log-level'] as 'debug' | 'info' | 'warn' | 'error' }),
   });
 
+  // SPEC-015 SET-015：多对话之前的那份全局配置，迁移进默认对话（幂等，老文件保留）
+  const migration = migrateLegacySettings(dir);
+
   const registry = new ConversationRegistry({
     root: dir,
     open: (id, conversationDir) => {
@@ -307,6 +311,9 @@ async function runServe(argv: string[]): Promise<number> {
   console.log(`  数据：${dir}`);
   console.log(`  可改源码：${session.clientSource?.root ?? '（未启用自举）'}`);
   console.log(`  设置页：顶栏「设置」——支持 OpenAI 兼容与 Anthropic 两种协议`);
+  if (migration.migrated) {
+    console.log(`  已迁移旧配置：${migration.from} → ${migration.to}（老文件保留）`);
+  }
   console.log(`  日志：${session.logger.file() ?? '（未开启文件日志）'}`);
   console.log('  排障：npm run serve -- --log-level debug --log-echo true（同时打到终端）');
   console.log('  审批：人类在场 → 自动放行，但每次动作都写进事件日志（审批 UI 属下一阶段）');

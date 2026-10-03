@@ -856,6 +856,8 @@ function boot() {
         // （这一步要在 redrawAll 之后——那次请求会把服务端的 active 定成 target）
         await switcher.load();
         switcher.setActive(target);
+        // 设置也是按对话存的：设置页开着的话，跟着切到这个对话的配置
+        if (settingsPage.isOpen()) await settingsPage.open();
         await workspacePanel.reload(target);
         if (pendingSwitch === null) break;
         target = pendingSwitch;
@@ -1079,7 +1081,9 @@ function boot() {
   // 设置页的纯逻辑与 DOM 都在 settings.js 里；这里只接线（UI3-001）
   const settingsPage = createSettingsPage({
     nodes: settingsNodes,
-    request: requestJson,
+    // 设置是**按对话**存的：这里的请求必须带上当前对话，否则在 c1 里打开设置
+    // 读到/改到的是 default 的配置（真机踩过：c1 用 Ollama，设置页显示 deepseek）
+    request: (path, options) => requestJson(scoped(path), options),
     onSaved(saved) {
       // 保存成功：设置页内部已回到对话页，这里补一句人类看得见的提示
       appendMessage(renderMessage({ kind: 'done', agent: '设置', text: `已保存模型设置：${currentModelText(saved)}` }));

@@ -186,6 +186,9 @@
 | **SET-008** | specs/015-model-settings.md | 设置变更广播 `settings` 事件，`/api/state` 里的生效模型信息同步更新。 | `test/settings.test.ts` · 设置变更广播 settings 事件，state.model 同步更新 |
 | **SET-009** | specs/015-model-settings.md | 非法输入被拒绝：未知协议、空 `baseUrl`、空 `model` → 400 且不落盘。 | `test/settings.test.ts` · 非法输入被拒绝且不落盘 |
 | **SET-010** | specs/015-model-settings.md | 打码规则可测：长度足够的 Key 显示头尾、过短的 Key 全遮。 | `test/settings.test.ts` · 打码规则：足够长显示头尾，短的一律遮住 |
+| **SET-013** | specs/015-model-settings.md | 模型配置**按对话隔离**，且设置页作用在**当前对话**上：`GET/PUT/POST /api/settings*` 都接受 `?conversation=<id>`；在 c1 里读到/改到的必须是 c1 的配置，绝不是 default 的（真机踩过：c1 用 Ollama，设置页却显示 deepseek）；切换对话时若设置页开着要跟着重读。 | `test/settings.test.ts` · 模型配置按对话隔离：设置接口跟着 ?conversation= 走 |
+| **SET-014** | specs/015-model-settings.md | 新建对话**继承**当前活跃对话的模型配置（协议 / 端点 / 模型 / Key / 超时），而不是回落到内置默认——否则用户每开一个对话都要重配一次模型与 Key。已有配置的对话不被覆盖。 | `test/settings.test.ts` · 新建对话继承当前对话的模型配置，而不是回落到内置默认 |
+| **SET-015** | specs/015-model-settings.md | 多对话之前的全局 `<root>/settings.json` 在启动时**幂等迁移**进默认对话：目标已存在则不覆盖（用户后来配的优先），老文件保留不删（不带 Key 的东西宁可多留一份也不悄悄删）。 | `test/settings.test.ts` · 旧位置 <root>/settings.json 幂等迁移进默认对话，老文件保留 |
 | **SURF-001** | specs/006-surface.md | 组件表 `COMPONENT_SPECS` 是唯一真相来源：校验器、渲染器与 JSON Schema 均由它派生，新增组件只需改这一处。 | `test/surface.test.ts` · 组件表是唯一真相来源：校验 / 渲染 / schema 三处同步 |
 | **SURF-002** | specs/006-surface.md | `validateViewSpec` 接受全部已声明组件的合法 spec 并返回 `{ok:true}`，对任意输入（含 `null`、数组、标量、循环引用）永不抛异常。 | `test/surface.test.ts` · validateViewSpec 接受合法 spec，且对任意输入永不抛异常 |
 | **SURF-003** | specs/006-surface.md | 未知组件类型报 `UNKNOWN_COMPONENT`，与结构错误（`MISSING_FIELD` / `BAD_FIELD_TYPE` / `UNKNOWN_FIELD`）在错误码上可区分，且错误带 `path`。 | `test/surface.test.ts` · 未知组件类型与结构错误在错误码上可区分，且都带 path |
@@ -248,7 +251,7 @@
 
 ## 统计
 
-- 验收标准：**241** 条
-- 已覆盖：**241** 条
+- 验收标准：**244** 条
+- 已覆盖：**244** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

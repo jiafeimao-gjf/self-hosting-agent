@@ -12,8 +12,10 @@ import {
   SettingsStore,
   labelFor,
   maskApiKey,
+  migrateLegacySettings,
   settingsToAgentEnv,
 } from '../src/server/settings.ts';
+import { ConversationRegistry } from '../src/server/conversations.ts';
 import type { ModelSettings } from '../src/server/settings.ts';
 import { AgentPool } from '../src/kernel/pool.ts';
 import type { Frame } from '../src/protocol/frames.ts';
@@ -398,4 +400,122 @@ test('打码规则：足够长显示头尾，短的一律遮住', () => {
   assert.equal(env.AGENT_PROTOCOL, 'anthropic');
   assert.equal(env.AGENT_BASE_URL, 'https://api.anthropic.com');
   assert.equal(env.AGENT_MODEL, 'http');
+});
+
+// @spec SET-013
+test('模型配置按对话隔离：设置接口跟着 ?conversation= 走', async () => {
+  const root = tempDir('scope-root');
+  const registry = new ConversationRegistry({
+    root,
+    open: (id, dir) => new ClientSession({ dir, id, lead: { script: [{ text: 'ok', done: true }] } }),
+  });
+  const session = registry.get('default');
+  session.updateSettings({ protocol: 'openai', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-flash', apiKey: 'sk-default-key-1' });
+
+  const server = await startServer({ session, registry, port: 0 });
+  try {
+    const created = await fetch(`${server.url}/api/conversations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '另一个对话' }),
+    });
+    const id = String(((await created.json()) as { conversation: { id: string } }).conversation.id);
+
+    // 在新对话里改成另一套配置
+    const put = await fetch(`${server.url}/api/settings?conversation=${id}`, {
+      method: 'PUT',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ protocol: 'openai', baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:4b', apiKey: '' }),
+    });
+    assert.equal(put.status, 200);
+
+    const readDefault = (await (await fetch(`${server.url}/api/settings?conversation=default`)).json()) as { model: string };
+    const readOther = (await (await fetch(`${server.url}/api/settings?conversation=${id}`)).json()) as { model: string };
+    assert.equal(readDefault.model, 'deepseek-flash', 'default 的配置不能被另一个对话改掉');
+    assert.equal(readOther.model, 'qwen3:4b');
+
+    // 连接测试同理：必须打的是该对话自己的端点
+    assert.equal(session.publicSettings().model, 'deepseek-flash');
+    assert.equal(registry.get(id).publicSettings().model, 'qwen3:4b');
+  } finally {
+    await server.close();
+    await registry.closeAll();
+  }
+});
+
+// @spec SET-014
+test('新建对话继承当前对话的模型配置，而不是回落到内置默认', async () => {
+  const root = tempDir('inherit-root');
+  const registry = new ConversationRegistry({
+    root,
+    open: (id, dir) => new ClientSession({ dir, id, lead: { script: [{ text: 'ok', done: true }] } }),
+  });
+  const session = registry.get('default');
+  session.updateSettings({
+    protocol: 'openai',
+    baseUrl: 'https://api.deepseek.com/v1',
+    model: 'deepseek-flash',
+    apiKey: 'sk-inherit-me-9876',
+    timeoutMs: 120000,
+  });
+
+  const server = await startServer({ session, registry, port: 0 });
+  try {
+    const response = await fetch(`${server.url}/api/conversations`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ title: '继承者' }),
+    });
+    const id = String(((await response.json()) as { conversation: { id: string } }).conversation.id);
+
+    const settings = (await (await fetch(`${server.url}/api/settings?conversation=${id}`)).json()) as {
+      model: string;
+      baseUrl: string;
+      apiKeyMasked: string;
+      timeoutMs: number;
+      label: string;
+    };
+    assert.equal(settings.model, 'deepseek-flash', '新对话必须继承模型，而不是回到 qwen3:4b');
+    assert.equal(settings.baseUrl, 'https://api.deepseek.com/v1');
+    assert.equal(settings.timeoutMs, 120000);
+    assert.match(settings.apiKeyMasked, /9876$/, 'Key 也要继承，否则新对话根本用不了');
+    assert.notEqual(settings.label, '本机 Ollama');
+
+    // 已配过的对话不被覆盖
+    const again = registry.get(id);
+    const before = again.publicSettings().model;
+    again.inheritSettingsFrom(session);
+    assert.equal(again.publicSettings().model, before);
+  } finally {
+    await server.close();
+    await registry.closeAll();
+  }
+});
+
+// @spec SET-015
+test('旧位置 <root>/settings.json 幂等迁移进默认对话，老文件保留', () => {
+  const root = tempDir('legacy-root');
+  const legacy = path.join(root, 'settings.json');
+  const target = path.join(root, 'conversations', 'default', 'settings.json');
+  fs.writeFileSync(
+    legacy,
+    `${JSON.stringify({ protocol: 'openai', baseUrl: 'https://api.deepseek.com/v1', model: 'deepseek-flash', apiKey: 'sk-legacy-key-4242', timeoutMs: 180000 })}\n`,
+    'utf8',
+  );
+
+  const first = migrateLegacySettings(root);
+  assert.equal(first.migrated, true);
+  assert.equal(fs.existsSync(target), true);
+  assert.equal(fs.existsSync(legacy), true, '老文件保留，不悄悄删掉带 Key 的东西');
+  assert.equal((JSON.parse(fs.readFileSync(target, 'utf8')) as { model: string }).model, 'deepseek-flash');
+
+  // 幂等：再来一次不覆盖（用户后来配的优先）
+  fs.writeFileSync(target, `${JSON.stringify({ protocol: 'openai', baseUrl: 'http://127.0.0.1:11434/v1', model: 'qwen3:4b', apiKey: '', timeoutMs: 180000 })}\n`, 'utf8');
+  const second = migrateLegacySettings(root);
+  assert.equal(second.migrated, false);
+  assert.equal((JSON.parse(fs.readFileSync(target, 'utf8')) as { model: string }).model, 'qwen3:4b', '已有配置不能被旧文件盖回去');
+
+  // 没有旧文件时什么都不做
+  const empty = tempDir('legacy-empty');
+  assert.equal(migrateLegacySettings(empty).migrated, false);
 });

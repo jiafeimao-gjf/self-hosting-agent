@@ -397,6 +397,31 @@ export class ClientSession {
   }
 
   /**
+   * SPEC-015 SET-014：新对话**继承**当前对话的模型配置，而不是回落到内置默认。
+   *
+   * 只在「本对话还没配过」时生效：已经配过的不动。继承来的 Key 与本机同一信任边界
+   * （都在同一个运行目录下），所以整体复制是合理的——用户选的就是「从最近用的那份起步」。
+   */
+  inheritSettingsFrom(source: ClientSession): { ok: boolean; inherited: boolean } {
+    if (this.id === source.id) return { ok: true, inherited: false };
+    if (this.#settingsStore.exists()) return { ok: true, inherited: false };
+
+    const saved = this.#settingsStore.save(source.#model, {
+      protocol: 'openai',
+      baseUrl: '',
+      model: '',
+      apiKey: '',
+      timeoutMs: 180000,
+    });
+    if (!saved.ok) return { ok: false, inherited: false };
+
+    this.#model = this.#settingsStore.load();
+    this.logger.info('新对话继承了模型配置', { from: source.id, model: this.#model.model });
+    this.#emit({ type: 'settings', data: this.publicSettings() });
+    return { ok: true, inherited: true };
+  }
+
+  /**
    * SPEC-020 `/clear`：写一条清空标记，并让子进程也写一条。
    *
    * 两边共用 `projectConversation` 的边界语义，所以宿主显示与 Agent 记忆同时清空；

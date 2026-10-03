@@ -166,7 +166,12 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       }
       readBody(req)
         .then((body) => {
+          // SPEC-015 SET-014：新对话从**当前活跃对话**继承模型配置，
+          // 而不是回落到内置默认（否则用户每开一个对话都要重配一次模型与 Key）
+          const source = registry.get(registry.active, { activate: false });
           const created = registry.create(typeof body.title === 'string' ? body.title : undefined);
+          const inherit = registry.get(created.id);
+          inherit.inheritSettingsFrom(source);
           sendJson(res, 200, { ok: true, conversation: created });
         })
         .catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));

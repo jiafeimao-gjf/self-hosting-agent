@@ -76,6 +76,29 @@ export interface SettingsStoreOptions {
   defaults?: ModelSettings;
 }
 
+/**
+ * SPEC-015 SET-015：把「多对话之前」的全局配置迁移进默认对话。
+ *
+ * 改成按对话存放后，老位置的 `<root>/settings.json` 就不再被读取了——
+ * 用户会遇到「我明明配过，怎么变回本机 Ollama 了」。这里做一次幂等迁移：
+ * 目标已存在就**不覆盖**（用户后来配的优先），老文件**保留不删**（宁可多留一个文件，也不悄悄删掉带 Key 的东西）。
+ */
+export function migrateLegacySettings(root: string): { migrated: boolean; from: string; to: string } {
+  const from = path.join(root, 'settings.json');
+  const to = path.join(root, 'conversations', 'default', 'settings.json');
+
+  if (!fs.existsSync(from) || fs.existsSync(to)) return { migrated: false, from, to };
+  try {
+    fs.mkdirSync(path.dirname(to), { recursive: true });
+    fs.copyFileSync(from, to);
+    fs.chmodSync(to, 0o600);
+    return { migrated: true, from, to };
+  } catch {
+    // 迁移失败不该拦住启动：用户还能在设置页里重新配一次
+    return { migrated: false, from, to };
+  }
+}
+
 export class SettingsStore {
   #file: string;
   #defaults: ModelSettings;
