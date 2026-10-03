@@ -18,6 +18,8 @@ import type { ModelSettings, PublicSettings } from './settings.ts';
 import fs from 'node:fs';
 import { clearBoundary } from '../runtime/conversation.ts';
 import { createModelPort } from './model-factory.ts';
+import { fetchModelList } from './models.ts';
+import type { ListModelsResult } from './models.ts';
 import { createLogger } from '../log/logger.ts';
 import type { Logger } from '../log/logger.ts';
 import { projectConversation } from '../runtime/conversation.ts';
@@ -224,6 +226,22 @@ export class ClientSession {
     this.#emit({ type: 'settings', data: this.publicSettings() });
     this.#emit({ type: 'state', data: this.state() });
     return { ok: true, settings: this.publicSettings(), restarted: changed };
+  }
+
+  /**
+   * SPEC-015 SET-016：列出端点上有哪些模型。
+   *
+   * 与连接测试同一套「候选配置」语义：传了 body 就校验后**只用于本次请求**，不写盘；
+   * 没传就用当前生效的配置。这样「先拉列表、再选模型、最后保存」的顺序是安全的。
+   */
+  async listModels(input?: unknown): Promise<ListModelsResult> {
+    let candidate = this.#model;
+    if (input !== undefined && input !== null && typeof input === 'object' && Object.keys(input).length > 0) {
+      const probe = this.#settingsStore.validate(input, this.#model);
+      if (!probe.ok) return { ok: false, code: probe.error.code, error: probe.error.message };
+      candidate = probe.value;
+    }
+    return fetchModelList(candidate);
   }
 
   /** 用当前（或候选）配置发一次最小请求（SET-006） */

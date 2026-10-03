@@ -16,6 +16,7 @@ import {
   settingsToAgentEnv,
 } from '../src/server/settings.ts';
 import { ConversationRegistry } from '../src/server/conversations.ts';
+import { fetchModelList } from '../src/server/models.ts';
 import type { ModelSettings } from '../src/server/settings.ts';
 import { AgentPool } from '../src/kernel/pool.ts';
 import type { Frame } from '../src/protocol/frames.ts';
@@ -518,4 +519,98 @@ test('旧位置 <root>/settings.json 幂等迁移进默认对话，老文件保�
   // 没有旧文件时什么都不做
   const empty = tempDir('legacy-empty');
   assert.equal(migrateLegacySettings(empty).migrated, false);
+});
+
+// @spec SET-016
+test('列模型：两家协议各走各的端点，错误可归因且绝不回显 Key', async () => {
+  const seen: Array<{ url: string; headers: Record<string, string> }> = [];
+  const fake = (payload: unknown, status = 200): typeof fetch =>
+    (async (url: string, init: { headers?: Record<string, string> }) => {
+      seen.push({ url: String(url), headers: init.headers ?? {} });
+      return new Response(typeof payload === 'string' ? payload : JSON.stringify(payload), {
+        status,
+        headers: { 'content-type': 'application/json' },
+      });
+    }) as unknown as typeof fetch;
+
+  const openai = await fetchModelList(
+    { protocol: 'openai', baseUrl: 'https://gw.example.com/v1', model: 'x', apiKey: 'sk-secret-123' },
+    { fetchImpl: fake({ data: [{ id: 'b-model' }, { id: 'a-model' }] }) },
+  );
+  assert.equal(openai.ok, true);
+  assert.deepEqual(openai.ok === true ? openai.models.map((m) => m.id) : [], ['a-model', 'b-model'], '结果要排序，便于点选');
+  assert.equal(seen[0]?.url, 'https://gw.example.com/v1/models');
+  assert.equal(seen[0]?.headers.authorization, 'Bearer sk-secret-123');
+
+  // Anthropic：端点与鉴权头都不同
+  const anthropic = await fetchModelList(
+    { protocol: 'anthropic', baseUrl: 'https://api.anthropic.com', model: 'x', apiKey: 'sk-ant-999' },
+    { fetchImpl: fake({ data: [{ id: 'claude-x', display_name: 'Claude X' }] }) },
+  );
+  assert.equal(anthropic.ok, true);
+  assert.deepEqual(anthropic.ok === true ? anthropic.models : [], [{ id: 'claude-x', label: 'Claude X' }]);
+  assert.equal(seen[1]?.url, 'https://api.anthropic.com/v1/models');
+  assert.equal(seen[1]?.headers['x-api-key'], 'sk-ant-999');
+
+  // 空 Key 的本机端点不带 Bearer（带一个空的反而可能被网关拒）
+  await fetchModelList(
+    { protocol: 'openai', baseUrl: 'http://127.0.0.1:11434/v1', model: 'x', apiKey: '' },
+    { fetchImpl: fake({ data: [] }) },
+  );
+  assert.equal('authorization' in (seen[2]?.headers ?? {}), false);
+
+  // 鉴权失败：错误里绝不能出现 Key
+  const denied = await fetchModelList(
+    { protocol: 'openai', baseUrl: 'https://gw.example.com/v1', model: 'x', apiKey: 'sk-secret-123' },
+    { fetchImpl: fake({ error: 'invalid api key' }, 401) },
+  );
+  assert.equal(denied.ok, false);
+  assert.equal(denied.ok === false && denied.code, 'UNAUTHORIZED');
+  assert.equal(JSON.stringify(denied).includes('sk-secret-123'), false, '错误信息里不得回显 Key');
+
+  // 响应格式不对 / 超时
+  const badShape = await fetchModelList(
+    { protocol: 'openai', baseUrl: 'https://gw.example.com/v1', model: 'x', apiKey: '' },
+    { fetchImpl: fake({ nope: true }) },
+  );
+  assert.equal(badShape.ok === false && badShape.code, 'BAD_RESPONSE');
+
+  // 真 fetch 在 abort 时会 reject —— 夹具必须照做，否则测的是「响应格式不对」而不是超时
+  const stalled = ((_url: string, init: { signal?: AbortSignal }) =>
+    new Promise((_resolve, reject) => {
+      init.signal?.addEventListener('abort', () => reject(new Error('The operation was aborted')));
+    })) as unknown as typeof fetch;
+  const timedOut = await fetchModelList(
+    { protocol: 'openai', baseUrl: 'https://gw.example.com/v1', model: 'x', apiKey: '' },
+    { fetchImpl: stalled, timeoutMs: 30 },
+  );
+  assert.equal(timedOut.ok === false && timedOut.code, 'TIMEOUT');
+
+  // 条目上限
+  const many = await fetchModelList(
+    { protocol: 'openai', baseUrl: 'https://gw.example.com/v1', model: 'x', apiKey: '' },
+    { fetchImpl: fake({ data: Array.from({ length: 500 }, (_, i) => ({ id: `m-${i}` })) }) },
+  );
+  assert.equal(many.ok === true && many.models.length, 200);
+});
+
+// @spec SET-016
+test('列模型的 HTTP 接口：候选配置不写盘，非法配置 400', async () => {
+  const session = new ClientSession({
+    dir: tempDir('models-http'),
+    lead: { script: [{ text: 'ok', done: true }] },
+  });
+  const server = await startServer({ session, port: 0 });
+  try {
+    const invalid = await fetch(`${server.url}/api/models`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ protocol: 'openai', baseUrl: '', model: '' }),
+    });
+    assert.equal(invalid.status, 400);
+    assert.equal(session.publicSettings().baseUrl, DEFAULT_MODEL_SETTINGS.baseUrl, '列模型不得改动已生效的配置');
+  } finally {
+    await server.close();
+    await session.close();
+  }
 });

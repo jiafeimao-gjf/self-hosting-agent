@@ -148,6 +148,18 @@ export declare function readFormFields(elements: unknown): SettingsForm;
 export declare function validateForm(form: unknown): ValidationResult;
 
 /** 表单 → 请求体；非法输入返回 `{ok:false, errors}` */
+/** 列模型用的请求体：不要求先填好模型名 */
+export declare function formToListPayload(form: unknown): { ok: true; payload: Record<string, unknown> } | { ok: false; errors: Record<string, string> };
+
+export interface ModelOption {
+  id: string;
+  label: string;
+}
+
+export declare function normalizeModelOptions(raw: unknown): ModelOption[];
+export declare function renderModelOptions(models: unknown, current: unknown): string;
+export declare function modelsStatusText(result: unknown): string;
+
 export declare function formToPayload(form: unknown): FormCheckResult;
 
 /** 字段名 → 中文 */
@@ -202,6 +214,8 @@ export interface SettingsPage {
   load(): Promise<void>;
   applySettings(raw: unknown): void;
   applyEffectiveModel(raw: unknown): void;
+  /** SPEC-015 SET-017：拉一次模型列表并渲染成可点选的候选 */
+  refreshModels(): Promise<ModelOption[] | null>;
 }
 
 /** 把设置页接上 DOM（只在浏览器里调用） */

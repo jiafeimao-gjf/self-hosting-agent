@@ -383,6 +383,79 @@ export function validateForm(form) {
  * 表单 → `PUT /api/settings` 请求体。
  * Key 为空时**不带 apiKey 字段**：服务端据此保留原有 Key（SPEC-015 §2）。
  */
+/**
+ * SPEC-015 SET-017：列模型用的请求体。
+ *
+ * 与 `formToPayload` 的差别只有一处：**不要求先填好模型名**——
+ * 「我还没决定用哪个模型，所以先让你列出来」正是这个功能的用途。
+ */
+export function formToListPayload(form) {
+  const item = isRecord(form) ? form : {};
+  const errors = {};
+  const protocol = str(item.protocol).toLowerCase();
+  if (protocol !== 'openai' && protocol !== 'anthropic') errors.protocol = '协议只能是 openai 或 anthropic';
+  const baseUrl = str(item.baseUrl).trim();
+  if (baseUrl.length === 0) errors.baseUrl = '请填写 Base URL';
+  else if (!/^https?:\/\//i.test(baseUrl)) errors.baseUrl = 'Base URL 需以 http:// 或 https:// 开头';
+  if (Object.keys(errors).length > 0) return { ok: false, errors };
+
+  const payload = { protocol, baseUrl };
+  const apiKey = str(item.apiKey);
+  if (apiKey.trim().length > 0) payload.apiKey = apiKey;
+  const timeoutMs = optionalInteger(item.timeoutMs);
+  if (typeof timeoutMs === 'number') payload.timeoutMs = timeoutMs;
+  return { ok: true, payload };
+}
+
+/** 服务端返回的模型项 → 稳定模型 */
+export function normalizeModelOptions(raw) {
+  const item = isRecord(raw) ? raw : {};
+  const list = Array.isArray(item.models) ? item.models : [];
+  const models = [];
+  for (const entry of list) {
+    if (!isRecord(entry)) continue;
+    const id = str(entry.id);
+    if (id.length === 0) continue;
+    models.push({ id, label: str(entry.label) });
+  }
+  return models;
+}
+
+/**
+ * 候选模型 → HTML（**点一下即切换**）。
+ *
+ * 全部转义：模型名来自端点，属于不可信输入。
+ */
+export function renderModelOptions(models, current) {
+  const list = Array.isArray(models) ? models : [];
+  if (list.length === 0) return '';
+  const active = str(current).trim();
+  return list
+    .map((model) => {
+      const meta = str(model.label);
+      const isCurrent = model.id === active;
+      return (
+        `<button type="button" class="model-option${isCurrent ? ' is-current' : ''}" data-model-id="${escapeHtml(model.id)}"` +
+        ` title="点一下即切换到这个模型">` +
+        `<span class="model-option-id">${escapeHtml(model.id)}</span>` +
+        (meta === '' ? '' : `<span class="model-option-meta">${escapeHtml(meta)}</span>`) +
+        '</button>'
+      );
+    })
+    .join('');
+}
+
+/** 列模型的状态文案（成功 / 失败都有话说） */
+export function modelsStatusText(result) {
+  const item = isRecord(result) ? result : {};
+  if (item.ok === true) {
+    const count = typeof item.count === 'number' ? item.count : normalizeModelOptions(item).length;
+    return count === 0 ? '端点上一个模型都没有' : `共 ${count} 个模型，点一下即切换`;
+  }
+  const reason = str(item.error) || `HTTP ${String(item.status ?? '?')}`;
+  return `列出模型失败：${reason}（仍可手动填写模型名）`;
+}
+
 export function formToPayload(form) {
   const check = validateForm(form);
   if (!check.ok) return { ok: false, errors: check.errors };
@@ -534,10 +607,23 @@ export function renderPresetButtons(activeId) {
  * 把设置页接上 DOM。所有节点由调用方传入，本模块不直接碰 `document`，
  * 这样纯逻辑与 DOM 的边界一眼可见。
  */
+/** 从事件目标往上找候选按钮（纯 DOM 小工具，找不到就返回 null） */
+function findModelButton(node) {
+  let current = node;
+  while (isRecord(current)) {
+    const className = typeof current.className === 'string' ? current.className : '';
+    if (className.split(/\s+/).includes('model-option')) return current;
+    current = isRecord(current.parentNode) ? current.parentNode : null;
+  }
+  return null;
+}
+
 export function createSettingsPage(options) {
   const config = isRecord(options) ? options : {};
   const nodes = isRecord(config.nodes) ? config.nodes : {};
   const request = typeof config.request === 'function' ? config.request : null;
+  /** 最近一次拉到的候选：点选之后要重画高亮 */
+  let lastModels = [];
   const onSaved = typeof config.onSaved === 'function' ? config.onSaved : null;
   let settings = normalizeSettings(null);
   let busy = false;
@@ -626,6 +712,62 @@ export function createSettingsPage(options) {
     const model = effectiveModelFromState(raw);
     if (model === null) return;
     paintModel(model);
+  }
+
+  /**
+   * SPEC-015 SET-017：拉一次模型列表并渲染成可点选的候选。
+   *
+   * 失败不阻断任何事：输入框照旧能自由填写（端点不支持列模型时这是唯一的活路）。
+   */
+  async function refreshModels() {
+    if (busy || request === null) return null;
+    const check = formToListPayload(readFormFields(nodes));
+    if (!check.ok) {
+      showModelsStatus(renderFormErrors(check.errors), 'fail');
+      return null;
+    }
+
+    setBusy(true);
+    showModelsStatus('正在拉取模型列表…', 'pending');
+    const response = await request('/api/models', { method: 'POST', body: check.payload });
+    setBusy(false);
+
+    if (response === null) {
+      showModelsStatus('列出模型失败：服务端没有响应（仍可手动填写模型名）', 'fail');
+      return null;
+    }
+    const data = isRecord(response.data) ? response.data : { ok: false, status: response.status };
+    const models = normalizeModelOptions(data);
+    lastModels = models;
+    paintModels(models, fieldValue(nodes.model));
+    showModelsStatus(modelsStatusText({ ...data, status: response.status }), data.ok === true ? 'ok' : 'fail');
+    return models;
+  }
+
+  function paintModels(models, current) {
+    if (nodes.optionsList === undefined || nodes.optionsList === null) return;
+    const html = renderModelOptions(models, current);
+    nodes.optionsList.innerHTML = html;
+    nodes.optionsList.hidden = html === '';
+    if (nodes.optionsDatalist !== undefined && nodes.optionsDatalist !== null) {
+      nodes.optionsDatalist.innerHTML = models
+        .map((model) => `<option value="${escapeHtml(model.id)}"></option>`)
+        .join('');
+    }
+  }
+
+  function showModelsStatus(text, state) {
+    if (nodes.modelsStatus === undefined || nodes.modelsStatus === null) return;
+    nodes.modelsStatus.textContent = text;
+    nodes.modelsStatus.dataset.state = state;
+  }
+
+  /** 点一下即切换：填进输入框，然后走与「保存」完全相同的那条路（服务端会重启 Lead 且不丢历史） */
+  async function switchToModel(id) {
+    if (typeof id !== 'string' || id.trim() === '') return;
+    if (nodes.model !== undefined && nodes.model !== null) nodes.model.value = id;
+    paintModels(lastModels, id);
+    await save();
   }
 
   async function save() {
@@ -748,5 +890,20 @@ export function createSettingsPage(options) {
   }
 
   paintSettings();
-  return { open, close, isOpen, load, applySettings, applyEffectiveModel };
+  if (nodes.modelsRefresh !== undefined && nodes.modelsRefresh !== null) {
+    nodes.modelsRefresh.addEventListener('click', () => {
+      void refreshModels();
+    });
+  }
+  if (nodes.optionsList !== undefined && nodes.optionsList !== null) {
+    // 事件委托：候选按钮是动态渲染的
+    nodes.optionsList.addEventListener('click', (event) => {
+      const target = isRecord(event) && isRecord(event.target) ? event.target : null;
+      const button = findModelButton(target);
+      if (button === null) return;
+      void switchToModel(button.getAttribute('data-model-id') ?? '');
+    });
+  }
+
+  return { open, close, isOpen, load, applySettings, applyEffectiveModel, refreshModels };
 }

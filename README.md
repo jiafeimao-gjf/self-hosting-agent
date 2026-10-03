@@ -8,9 +8,9 @@
 
 | 指标 | 值 |
 | --- | --- |
-| 验收标准 | **244** 条（`specs/*.md`，全部有稳定 ID） |
-| 覆盖情况 | **244 / 244** 全部有测试守着（`npm run trace` 门禁通过） |
-| 测试 | **259** 个，全绿（约 8s，零第三方依赖） |
+| 验收标准 | **246** 条（`specs/*.md`，全部有稳定 ID） |
+| 覆盖情况 | **246 / 246** 全部有测试守着（`npm run trace` 门禁通过） |
+| 测试 | **262** 个，全绿（约 8s，零第三方依赖） |
 | 类型检查 | `npm run typecheck` 全绿（tsc 5.9 `--strict --erasableSyntaxOnly`） |
 | P0 已落地 | 帧协议、事件日志、五步 Agent Loop、子进程池与审批门、任务板、邮箱、View Spec 渲染、SurfaceIngest |
 | P1 已落地 | 宿主工具桥（`tool.reply`）、`agent.spawn/send/wait` 与任务板工具、TeamRunner 多进程编排、OpenAI 兼容 HTTP 模型端口 |
@@ -21,6 +21,15 @@
 | P5 已落地 | **诊断日志 + 真模型跑通**：logger（级别/JSONL/子进程 stderr 收口/崩溃兜底/访问日志/事件日志轮转）；工具名线上合法化与参数 schema 透传——这两条修完，真 DeepSeek 端点才真正画出界面 |
 | P4 已落地 | **设置页 + 可自配模型**：浏览器里切换 OpenAI 兼容 / Anthropic 两种协议，填 Base URL / 模型 / Key / 温度 / 超时，四个预设、连接测试、保存即生效（Lead 重启且历史不丢）；Key 打码、永不回显 |
 | 尚未落地 | Electron/Tauri 外壳、人类审批 UI（当前人类在场即自动放行但全程留痕）、更细粒度的热更新（HMR） |
+
+## 模型列表：看得见才能切
+
+设置页的「列出模型」按候选配置拉一次端点上的模型清单（OpenAI 兼容走 `{baseUrl}/models`，
+Anthropic 走 `{baseUrl}/v1/models`），渲染成**点一下即切换**的候选；本机 Ollama 会额外用
+`/api/tags` 补上参数量与体积（`qwen3.5:9b · 9.7B · 6.6 GB`）。
+
+输入框仍是自由文本，还挂了 `datalist` 做输入联想——**端点不支持列模型时（或你要填一个没列出来的名字），
+手动输入这条路永远畅通**。失败也只把原因写在状态栏里，不阻断任何操作。
 
 ## 模型配置：每个对话一份
 
@@ -90,7 +99,7 @@
 ## 排障：日志在哪、看什么
 
 ```bash
-ls .agent-client/<run>/logs/app.log      # 结构化 JSONL：ts / level / scope / message / data
+ls .agent-client/<run>/conversations/<id>/logs/app.log   # 结构化 JSONL：ts / level / scope / message / data
 npm run serve -- --log-level debug --log-echo true   # 同时打到终端
 ```
 

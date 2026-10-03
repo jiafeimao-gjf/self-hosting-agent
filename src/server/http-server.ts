@@ -320,6 +320,15 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       return;
     }
 
+    if (route === '/api/models' && method === 'POST') {
+      // SPEC-015 SET-016：按候选配置列模型（不写盘），失败给可归因的原因
+      readBody(req)
+        .then((body) => session.listModels(body))
+        .then((result) => sendJson(res, result.ok ? 200 : 400, result))
+        .catch((err: Error) => sendJson(res, 400, { ok: false, code: 'BAD_REQUEST', error: err.message }));
+      return;
+    }
+
     if (route === '/api/settings/test' && method === 'POST') {
       readBody(req)
         .then((body) => session.testSettings(body))

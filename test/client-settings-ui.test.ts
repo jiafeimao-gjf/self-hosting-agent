@@ -18,8 +18,11 @@ import {
   emptyForm,
   fieldLabel,
   formFromPreset,
+  formToListPayload,
   formToPayload,
   labelFor,
+  modelsStatusText,
+  normalizeModelOptions,
   normalizeSaveError,
   normalizeSettings,
   normalizeTestResult,
@@ -29,6 +32,7 @@ import {
   renderCurrentModel,
   renderFormErrors,
   renderLoadError,
+  renderModelOptions,
   renderPresetButtons,
   renderProtocolHint,
   renderSaveError,
@@ -497,4 +501,50 @@ test('防御与安全：Key 不进浏览器存储 / 日志 / URL，文本全部�
   }
   assert.equal(settingsJs.includes('@import'), false);
   assert.equal(settingsJs.includes('<script'), false);
+});
+
+// @spec SET-017
+test('列模型：不要求先填模型名，候选可点选、全部转义、失败也不阻断手动输入', () => {
+  // 请求体：只要 baseUrl 合法就够了（「还没决定用哪个，先列出来」正是这个功能的用途）
+  const ok = formToListPayload({ protocol: 'openai', baseUrl: 'http://127.0.0.1:11434/v1', model: '', apiKey: '' });
+  assert.equal(ok.ok, true);
+  assert.deepEqual(ok.ok === true ? ok.payload : {}, { protocol: 'openai', baseUrl: 'http://127.0.0.1:11434/v1' });
+
+  const missing = formToListPayload({ protocol: 'openai', baseUrl: '', model: '' });
+  assert.equal(missing.ok, false);
+
+  // 稳定模型：坏条目丢弃，不抛异常
+  assert.deepEqual(normalizeModelOptions({ models: [{ id: 'a' }, { nope: 1 }, { id: '' }, null] }), [{ id: 'a', label: '' }]);
+  assert.deepEqual(normalizeModelOptions('不是对象'), []);
+
+  // 候选渲染：点一下即切换 + 全转义（模型名来自端点，属不可信输入）
+  const html = renderModelOptions(
+    [
+      { id: 'qwen3.5:9b', label: '9.7B · 6.6 GB' },
+      { id: '<img src=x onerror=alert(1)>', label: '' },
+    ],
+    'qwen3.5:9b',
+  );
+  assert.match(html, /data-model-id="qwen3\.5:9b"/);
+  assert.match(html, /is-current/, '当前模型要高亮');
+  assert.match(html, /9\.7B · 6\.6 GB/);
+  assert.equal(html.includes('<img src=x'), false, '模型名必须转义');
+  assert.equal(renderModelOptions([], 'x'), '');
+
+  // 状态文案：成功说数量、失败说原因并明确「仍可手动填写」
+  assert.match(modelsStatusText({ ok: true, count: 10 }), /共 10 个模型/);
+  assert.match(modelsStatusText({ ok: true, count: 0 }), /一个模型都没有/);
+  const failed = modelsStatusText({ ok: false, error: '连不上端点' });
+  assert.match(failed, /连不上端点/);
+  assert.match(failed, /仍可手动填写/);
+
+  // 接线：按钮 + 事件委托 + 走 /api/models + 点选后调用保存
+  assert.match(indexHtml, /id="set-models-refresh"/);
+  assert.match(indexHtml, /id="model-options"/);
+  assert.match(indexHtml, /id="model-options-list"/);
+  assert.match(indexHtml, /id="models-status"/);
+  assert.match(settingsJs, /'\/api\/models'/);
+  assert.match(settingsJs, /function refreshModels/);
+  assert.match(settingsJs, /function switchToModel/);
+  assert.match(settingsJs, /dataset\.state|showModelsStatus/);
 });

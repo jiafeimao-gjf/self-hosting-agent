@@ -230,10 +230,17 @@
               <span class="field-label">Base URL</span>
               <input id="set-base-url" class="input" type="text" spellcheck="false" />
             </label>
-            <label class="field">
-              <span class="field-label">模型名</span>
-              <input id="set-model" class="input" type="text" spellcheck="false" />
-            </label>
+            <div class="field field-wide">
+              <label class="field-label" for="set-model">模型名</label>
+              <!-- SPEC-015 SET-017：能列出来就能点着换，不必凭记忆敲 qwen3.5:9b 这种名字 -->
+              <div class="field-row">
+                <input id="set-model" class="input" type="text" spellcheck="false" list="model-options" />
+                <button id="set-models-refresh" class="btn" type="button" title="从端点拉取可用模型">列出模型</button>
+              </div>
+              <datalist id="model-options"></datalist>
+              <div id="model-options-list" class="model-options" hidden></div>
+              <span id="models-status" class="settings-hint"></span>
+            </div>
             <label class="field field-wide">
               <span class="field-label">API Key</span>
               <input id="set-api-key" class="input" type="password" autocomplete="new-password" spellcheck="false" />

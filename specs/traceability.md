@@ -189,6 +189,8 @@
 | **SET-013** | specs/015-model-settings.md | 模型配置**按对话隔离**，且设置页作用在**当前对话**上：`GET/PUT/POST /api/settings*` 都接受 `?conversation=<id>`；在 c1 里读到/改到的必须是 c1 的配置，绝不是 default 的（真机踩过：c1 用 Ollama，设置页却显示 deepseek）；切换对话时若设置页开着要跟着重读。 | `test/settings.test.ts` · 模型配置按对话隔离：设置接口跟着 ?conversation= 走 |
 | **SET-014** | specs/015-model-settings.md | 新建对话**继承**当前活跃对话的模型配置（协议 / 端点 / 模型 / Key / 超时），而不是回落到内置默认——否则用户每开一个对话都要重配一次模型与 Key。已有配置的对话不被覆盖。 | `test/settings.test.ts` · 新建对话继承当前对话的模型配置，而不是回落到内置默认 |
 | **SET-015** | specs/015-model-settings.md | 多对话之前的全局 `<root>/settings.json` 在启动时**幂等迁移**进默认对话：目标已存在则不覆盖（用户后来配的优先），老文件保留不删（不带 Key 的东西宁可多留一份也不悄悄删）。 | `test/settings.test.ts` · 旧位置 <root>/settings.json 幂等迁移进默认对话，老文件保留 |
+| **SET-016** | specs/015-model-settings.md | 列出可用模型：`POST /api/models` 按候选配置（不写盘）拉取列表——OpenAI 兼容走 `{baseUrl}/models`、Anthropic 走 `{baseUrl}/v1/models` + `x-api-key`；返回 `{ok, models:[{id,label?}], count}`，条目有上限；超时 / 连不上 / 鉴权失败 / 响应格式不对都给出**可归因**的错误码，且**绝不回显 Key**。 | `test/settings.test.ts` · 列模型：两家协议各走各的端点，错误可归因且绝不回显 Key<br>`test/settings.test.ts` · 列模型的 HTTP 接口：候选配置不写盘，非法配置 400 |
+| **SET-017** | specs/015-model-settings.md | 客户端「列出模型」：一次点击即列出端点上的模型并渲染成可点选的候选（`datalist` 提供输入联想 + 候选按钮**点一下即切换**，走与保存完全相同的路径）；本地 Ollama 必须能列出本机模型并尽量带上体积/参数量；列表为空或失败都显示原因，且**不阻断手动输入模型名**。 | `test/client-settings-ui.test.ts` · 列模型：不要求先填模型名，候选可点选、全部转义、失败也不阻断手动输入 |
 | **SURF-001** | specs/006-surface.md | 组件表 `COMPONENT_SPECS` 是唯一真相来源：校验器、渲染器与 JSON Schema 均由它派生，新增组件只需改这一处。 | `test/surface.test.ts` · 组件表是唯一真相来源：校验 / 渲染 / schema 三处同步 |
 | **SURF-002** | specs/006-surface.md | `validateViewSpec` 接受全部已声明组件的合法 spec 并返回 `{ok:true}`，对任意输入（含 `null`、数组、标量、循环引用）永不抛异常。 | `test/surface.test.ts` · validateViewSpec 接受合法 spec，且对任意输入永不抛异常 |
 | **SURF-003** | specs/006-surface.md | 未知组件类型报 `UNKNOWN_COMPONENT`，与结构错误（`MISSING_FIELD` / `BAD_FIELD_TYPE` / `UNKNOWN_FIELD`）在错误码上可区分，且错误带 `path`。 | `test/surface.test.ts` · 未知组件类型与结构错误在错误码上可区分，且都带 path |
@@ -251,7 +253,7 @@
 
 ## 统计
 
-- 验收标准：**244** 条
-- 已覆盖：**244** 条
+- 验收标准：**246** 条
+- 已覆盖：**246** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处
