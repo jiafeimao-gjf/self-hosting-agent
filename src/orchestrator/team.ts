@@ -138,7 +138,7 @@ export class TeamRunner implements HostRuntime {
     this.log = options.log ?? new EventLog({ dir: path.join(this.dir, 'events') });
     this.approval = options.approval ?? new ApprovalGate();
     this.document = options.document ?? new ViewDocument();
-    this.ingest = new SurfaceIngest({ document: this.document });
+    this.ingest = new SurfaceIngest({ document: this.document, log: this.log });
     this.board = options.board ?? new TaskBoard();
     this.mailbox = options.mailbox ?? new Mailbox({ dir: path.join(this.dir, 'mailbox') });
     this.pool = new AgentPool({

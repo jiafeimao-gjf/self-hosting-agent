@@ -215,6 +215,14 @@ export class ClientSession {
         this.#emit({ type: 'state', data: this.state() });
       },
     });
+
+    // SPEC-025：**界面 = f(事件日志)** —— 这句话对界面自己也成立。
+    // 启动时按 ui.patch / surface.rollback 回放，重启前画过的界面会原样回来。
+    // （必须放在 runner 建好之后：回放要用 runner.ingest。）
+    const replayed = this.runner.ingest.replay(log.read());
+    if (replayed.applied > 0 || replayed.rolledBack > 0) {
+      this.logger.info('从事件日志回放界面', replayed);
+    }
   }
 
   get log(): EventLog {
@@ -379,6 +387,13 @@ export class ClientSession {
   rollback(version: number): { ok: boolean; version?: number; error?: string } {
     const result = this.runner.document.rollback(version);
     if (!result.ok) return { ok: false, error: `${result.error.code}: ${result.error.message}` };
+    // 回滚也是一次「界面变更」：记下来，重启回放时才能保持回滚后的样子
+    this.runner.log.append({
+      type: 'surface.rollback',
+      from: result.version,
+      to: version,
+      rolledBackTo: version,
+    });
     this.#lastDocumentVersion = -1;
     this.#emitDocument();
     this.#emit({ type: 'state', data: this.state() });
@@ -558,6 +573,37 @@ export class ClientSession {
 
   lastActiveAt(): string {
     return this.#lastActiveAt;
+  }
+
+  /**
+   * SPEC-025：界面版本清单——给人类一个「看得见、点得动」的历史。
+   *
+   * 版本号与区块数来自文档本身，时间戳来自事件日志（文档不记时间）；
+   * 两边按版本号对齐，取不到时间就给空串，不编造。
+   */
+  surfaceVersions(): Array<{ version: number; ts: string; scopes: string[]; note: string; rolledBackTo?: number }> {
+    const stamps = new Map<number, string>();
+    for (const event of this.runner.log.read()) {
+      if (event.type === 'ui.patch') {
+        const version = Number(event.version);
+        if (Number.isInteger(version) && !stamps.has(version)) stamps.set(version, event.ts);
+      }
+      if (event.type === 'surface.rollback') {
+        const version = Number(event.from);
+        if (Number.isInteger(version) && !stamps.has(version)) stamps.set(version, event.ts);
+      }
+    }
+
+    return this.runner.document
+      .history()
+      .map((snapshot) => ({
+        version: snapshot.version,
+        ts: stamps.get(snapshot.version) ?? '',
+        scopes: Object.keys(snapshot.scopes),
+        note: snapshot.note,
+        ...(snapshot.rolledBackTo === undefined ? {} : { rolledBackTo: snapshot.rolledBackTo }),
+      }))
+      .reverse(); // 最新的排最前：人点的大多是"回到上一版"
   }
 
   /** 对话条数（对话列表用） */

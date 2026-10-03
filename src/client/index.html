@@ -93,6 +93,11 @@
             >文件</button>
           </div>
           <span class="hint">sandbox iframe · srcdoc 实时更新，不刷新页面</span>
+          <!-- SPEC-025：界面版本列表 + 一键回到某一版（替代原来那个 window.prompt） -->
+          <span class="surface-history">
+            <select id="surface-versions" class="select-compact" aria-label="界面版本"></select>
+            <button id="surface-restore" class="btn btn-ghost" type="button" title="回到选中的那一版">回到这一版</button>
+          </span>
           <span class="version-chip">沙箱 <b id="surface-version">v0</b></span>
           <span class="version-chip">浏览器 <b id="browser-version">v0</b></span>
         </div>

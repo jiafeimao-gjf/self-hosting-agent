@@ -64,6 +64,16 @@ export declare function workspaceUrl(id: unknown): string;
 /** 工作空间单文件地址（`path` 经过 encodeURIComponent） */
 /** SPEC-019：浏览器面板的打开地址（带当前对话） */
 export declare const BROWSER_OPEN_PATH: string;
+/** SPEC-025：界面版本清单 */
+export declare const SURFACE_VERSIONS_PATH: string;
+export declare function surfaceVersionsUrl(id: unknown): string;
+export declare function normalizeSurfaceVersions(raw: unknown): {
+  current: number | null;
+  versions: Array<{ version: number; ts: string; scopes: string[]; note: string }>;
+};
+export declare function surfaceVersionLabel(entry: unknown): string;
+export declare function renderSurfaceVersions(raw: unknown): string;
+
 export declare function browserOpenUrl(id: unknown): string;
 
 export declare function workspaceFileUrl(id: unknown, path: unknown): string;

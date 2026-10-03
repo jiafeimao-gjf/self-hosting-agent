@@ -344,7 +344,14 @@ test('首帧不会被吞：没画上就必须再画，document 事件强制重�
   assert.match(appSource, /addEventListener\('load'/);
   assert.match(appSource, /pendingHtml/);
   assert.match(appSource, /iframeLoaded/);
-  assert.match(appSource, /requestAnimationFrame\(\(\) => flushPendingSurface\(\)\)/, '必须有错过 load 事件时的兜底补画');
+  // 兜底不能只是"补画待画内容"：首次 load 可能早于挂监听，那 iframeLoaded 会永远是 false，
+  // 之后送来的界面全堆在 pendingHtml 里永不落地（重启后面板空白、srcdoc 为空）。
+  // 所以兜底必须**先认定就绪**，再补画。
+  assert.match(
+    appSource,
+    /requestAnimationFrame\(\(\) => \{[^}]*state\.iframeLoaded = true;[^}]*flushPendingSurface\(\);/s,
+    '必须有错过 load 事件时的兜底：先认定 iframe 就绪，再补画',
+  );
 });
 
 // @spec UI-008

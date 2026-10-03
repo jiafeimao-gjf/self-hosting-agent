@@ -213,6 +213,12 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       return;
     }
 
+    if (route === '/api/surface/versions' && method === 'GET') {
+      // SPEC-025：界面版本清单（最新的排最前）
+      sendJson(res, 200, { ok: true, current: session.state().document.version, versions: session.surfaceVersions() });
+      return;
+    }
+
     if (route === '/api/browser/open' && method === 'POST') {
       // SPEC-019：浏览器面板的入口 = 打开工作空间里的 HTML 文件
       readBody(req)

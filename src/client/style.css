@@ -1725,3 +1725,21 @@ body {
 .md-streaming .md > *:last-child {
   display: inline;
 }
+
+/* SPEC-025：界面版本切换 */
+.surface-history {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.select-compact {
+  max-width: 240px;
+  padding: 3px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+}

@@ -230,6 +230,12 @@
 | **SURF-011** | specs/006-surface.md | 版本号单调递增：每次成功变更 +1、失败不变；`rollback(version)` 回到任意历史版本的界面内容并产生新的递增版本。 | `test/surface.test.ts` · 版本号单调递增，rollback 回到历史内容并产生新的递增版本 |
 | **SURF-012** | specs/006-surface.md | `ViewDocument.render()` 输出整页 HTML，包含全部 scope 区块并保持转义。 | `test/surface.test.ts` · render 输出整页 HTML，包含全部 scope 区块并保持转义 |
 | **SURF-013** | specs/006-surface.md | 第四种粒度 `upsert`：scope 不存在则挂载、已存在则整块替换，**不做存在性检查**。真模型第一次渲染时无从知道 scope 是否存在，这是它该用的默认粒度（否则它必然浪费一轮去猜）。 | `test/surface.test.ts` · upsert 粒度：不存在则挂载、已存在则整块替换，不做存在性检查 |
+| **SURF-014** | specs/025-surface-history.md | 界面改动落成事件：`ui.patch` 成功 → 写一条 `ui.patch` 事件（含 version / op / scope / spec）；被拒绝的改动**不写**事件。 | `test/surface-history.test.ts` · 界面改动落成事件；被拒绝的改动不写事件 |
+| **SURF-015** | specs/025-surface-history.md | 启动回放：新建会话时按事件日志回放 `ui.patch` 与 `surface.rollback`，文档版本与各 scope 内容恢复到重启前；回放**不产生新事件**（幂等：重启两次，日志长度不变）。 | `test/surface-history.test.ts` · 重启不丢：按事件日志回放，界面与版本号原样回来（且回放不产生新事件） |
+| **SURF-016** | specs/025-surface-history.md | 回滚落成事件：`surface.rollback` 写入事件日志；回滚后重启，文档停在**回滚后**的版本。 | `test/surface-history.test.ts` · 回滚也是一次变更：回滚后重启，文档停在回滚后的版本 |
+| **SURF-017** | specs/025-surface-history.md | 版本清单接口：`GET /api/surface/versions` 返回从新到旧的清单（version / ts / scopes / note）与当前版本；时间戳取自事件日志，取不到就空串（不编造）。 | `test/surface-history.test.ts` · 版本清单接口：从新到旧、带时间与区块数，时间取不到不编造 |
+| **SURF-018** | specs/025-surface-history.md | 客户端版本列表：下拉里每一版显示 `vN · 时间 · 区块数`，当前版本标注「（当前）」；点「回到这一版」调用 `/api/rollback` 并在成功后刷新清单；回滚失败要有可见错误、不静默。 | `test/surface-history.test.ts` · 客户端版本列表：vN · 时间 · 区块数，当前标注、坏输入不炸 |
+| **SURF-019** | specs/025-surface-history.md | 重启后的第一帧必须**真的画出来**：页面加载时 iframe 的首次 `load` 可能早于挂监听，此时必须由启动兜底**主动认定 iframe 已就绪**（而不是只补画"待画内容"）——否则后续送来的界面永远卡在待画队列里，面板一片空白且 `srcdoc` 为空；写入之后还要在**加载完成之后**强制重绘一帧（先于加载地隐藏会把这次导航撤掉）。界面面板与浏览器面板同此。真 bug：重启后界面面板空白。 | `test/surface-history.test.ts` · 重启后的第一帧必须真的画出来：兜底要主动认定 iframe 就绪，重绘要在加载之后 |
 | **TASK-001** | specs/005-taskboard-mailbox.md | `create` 生成稳定 id 与完整字段（`pending`、`owner=null`、`revision=0`、`createdAt=updatedAt`），并能被 `get`/`list` 读到；读取结果是快照副本。 | `test/taskboard.test.ts` · create 生成稳定 id 与完整字段，get/list 返回快照副本 |
 | **TASK-002** | specs/005-taskboard-mailbox.md | 状态机只允许 `claim`/`release`/`complete`/`reopen` 的合法迁移，其余迁移返回 `INVALID_TRANSITION` 且任务不变。 | `test/taskboard.test.ts` · 状态机拒绝非法迁移，任务保持不变 |
 | **TASK-003** | specs/005-taskboard-mailbox.md | CAS：`expectedRevision` 不符返回 `REVISION_CONFLICT`（含 `expected`/`actual`），任务字段与 `revision` 不变。 | `test/taskboard.test.ts` · CAS：expectedRevision 不符报 REVISION_CONFLICT，任务不变 |
@@ -280,7 +286,7 @@
 
 ## 统计
 
-- 验收标准：**273** 条
-- 已覆盖：**273** 条
+- 验收标准：**279** 条
+- 已覆盖：**279** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

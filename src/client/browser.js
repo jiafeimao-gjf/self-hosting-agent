@@ -352,7 +352,11 @@ export function createBrowserPanel(options) {
    * 全部内容都堆在 pendingHtml 里永不落地 —— 和界面面板踩过的是同一个坑。
    */
   if (typeof requestAnimationFrame === 'function') {
-    requestAnimationFrame(() => flushPendingBrowser());
+    requestAnimationFrame(() => {
+      // 首次 load 可能早于挂监听：不等它了，直接认定可以画（否则内容永远卡在 pendingHtml）
+      loaded = true;
+      flushPendingBrowser();
+    });
   }
 
   /** 应用一份文档：更新标题 / 版本 / 空态，必要时写 srcdoc。返回是否真的重画 */

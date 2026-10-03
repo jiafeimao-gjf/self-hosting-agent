@@ -37,6 +37,8 @@ import {
   createWorkspacePanel,
   isCommandText,
   normalizeCommandResult,
+  SURFACE_VERSIONS_PATH,
+  renderSurfaceVersions,
   renderCommandResult,
   streamUrl,
   withConversation,
@@ -488,6 +490,8 @@ function boot() {
     composer: document.getElementById('composer'),
     input: document.getElementById('input'),
     rollback: document.getElementById('rollback'),
+    surfaceVersions: document.getElementById('surface-versions'),
+    surfaceRestore: document.getElementById('surface-restore'),
     interrupt: document.getElementById('interrupt'),
     agents: document.getElementById('agents'),
     tasks: document.getElementById('tasks'),
@@ -702,14 +706,51 @@ function boot() {
     state.pendingHtml = null;
     // 主动认定"可以画了"：不能再无限等一个可能永远不来的事件
     state.iframeLoaded = true;
-    dom.surface.srcdoc = html;
+    writeSurface(html);
     state.painted = true;
   }
 
-  // 正常路径：沙箱首次加载完成 → 补画
+  /**
+   * SPEC-025：强制 iframe 重绘一帧。
+   *
+   * 与浏览器面板同一个真机现象：`srcdoc` 赋值后 iframe 明明加载过了
+   * （属性对、load 也触发），画面却一直是空的，直到有别的重排把它顶出来。
+   * 实测：只读 offsetHeight 没用、同值再赋一次也没用，**让它消失一帧再回来**才有用。
+   */
+  function nudgeSurface() {
+    const style = dom.surface.style;
+    if (style === undefined || style === null) return;
+    style.display = 'none';
+    void dom.surface.offsetHeight;
+    const restore = () => {
+      if (dom.surface !== null && dom.surface !== undefined) dom.surface.style.display = '';
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restore);
+    else setTimeout(restore, 16);
+  }
+
+  /** 顶帧必须等**加载完成之后**：导航还没起来就把它藏起来，会把这次导航撤掉 */
+  let surfaceNudgePending = false;
+
+  function writeSurface(html) {
+    dom.surface.srcdoc = html;
+    surfaceNudgePending = true;
+    setTimeout(() => {
+      if (surfaceNudgePending) {
+        surfaceNudgePending = false;
+        nudgeSurface();
+      }
+    }, 400);
+  }
+
+  // 正常路径：沙箱首次加载完成 → 补画 + 把画面顶出来
   dom.surface.addEventListener('load', () => {
     state.iframeLoaded = true;
     flushPendingSurface();
+    if (surfaceNudgePending) {
+      surfaceNudgePending = false;
+      nudgeSurface();
+    }
   });
 
   /**
@@ -718,7 +759,13 @@ function boot() {
    * 全部内容都堆在 pendingHtml 里永不落地 —— 界面面板就是一直空的。
    * 所以下一帧再确认一次，不依赖"我们有没有恰好听到那个事件"。
    */
-  requestAnimationFrame(() => flushPendingSurface());
+  requestAnimationFrame(() => {
+    // **先认定可以画了**：首次 load 事件可能在我们挂监听之前就发生过（iframe 在初始 HTML 里），
+    // 那 `iframeLoaded` 会永远是 false，之后送来的界面全堆在 pendingHtml 里永不落地——
+    // 真机上就是「重启后界面面板一片空白，而且 srcdoc 是空的」。
+    state.iframeLoaded = true;
+    flushPendingSurface();
+  });
 
   function setConnection(status) {
     dom.conn.dataset.state = status;
@@ -759,7 +806,7 @@ function boot() {
       state.pendingHtml = html; // 先记下，等沙箱 settled 再画
       return;
     }
-    dom.surface.srcdoc = html;
+    writeSurface(html);
     state.painted = true;
   }
 
@@ -767,6 +814,7 @@ function boot() {
     const snapshot = normalizeState(raw);
     state.version = snapshot.version;
     setSurface(snapshot.html, snapshot.version);
+    void loadSurfaceVersions();
 
     // SPEC-020：/api/state 新增 `conversation:{id,title}`。这里只同步切换器的选中态，
     // 不触发切换（切换由人类操作 / 命令 action / 删除三处驱动，免得回环）。
@@ -1385,15 +1433,54 @@ function boot() {
     void post(scoped('/api/interrupt'), { reason: '人类夺权' });
   });
 
-  dom.rollback.addEventListener('click', () => {
-    const answer = window.prompt('回滚到哪个界面版本？', String(Math.max(0, state.version - 1)));
-    if (answer === null) return;
-    const version = Number.parseInt(answer.trim(), 10);
-    if (!Number.isInteger(version) || version < 0) {
-      appendMessage(renderMessage({ kind: 'error', agent: '宿主', text: `无效的版本号：${answer}` }));
+  /**
+   * SPEC-025：界面版本清单。
+   *
+   * 之前那个「回滚」按钮靠 `window.prompt` 让人**凭记忆敲版本号**——列表出来之后
+   * 人类能看见每一版是什么时候画的、有几个区块，点一下就能回去。
+   */
+  async function loadSurfaceVersions() {
+    if (dom.surfaceVersions === null || dom.surfaceVersions === undefined) return;
+    const response = await requestJson(scoped(SURFACE_VERSIONS_PATH), { method: 'GET' });
+    const data = isRecord(response?.data) ? response.data : {};
+    const html = renderSurfaceVersions(data);
+    dom.surfaceVersions.innerHTML = html;
+    dom.surfaceVersions.disabled = html === '';
+
+    // 顶栏那个「回滚」按钮现在只需要干一件事：把选择交给列表
+    if (dom.rollback !== null && dom.rollback !== undefined) dom.rollback.hidden = html === '';
+  }
+
+  async function restoreSelectedVersion() {
+    const select = dom.surfaceVersions;
+    if (select === null || select === undefined) return;
+    const version = Number.parseInt(String(select.value), 10);
+    if (!Number.isInteger(version) || version < 0) return;
+    const result = await requestJson(scoped('/api/rollback'), { method: 'POST', body: { version } });
+    if (result === null || result.ok !== true || (isRecord(result.data) && result.data.ok === false)) {
+      const detail = isRecord(result?.data) ? String(result.data.error ?? '') : `HTTP ${String(result?.status ?? '?')}`;
+      appendMessage(renderMessage({ kind: 'error', agent: '宿主', text: `回滚失败：${detail}` }));
       return;
     }
-    void post(scoped('/api/rollback'), { version });
+    await loadSurfaceVersions();
+  }
+
+  if (dom.surfaceRestore !== null && dom.surfaceRestore !== undefined) {
+    dom.surfaceRestore.addEventListener('click', () => void restoreSelectedVersion());
+  }
+  // 旧入口保留可用：点它会回到「上一版」，不再让人敲版本号
+  dom.rollback.addEventListener('click', () => {
+    if (dom.surfaceVersions !== null && dom.surfaceVersions !== undefined) {
+      const options = Array.from(dom.surfaceVersions.options);
+      const currentIndex = options.findIndex((option) => option.selected);
+      const previous = options[currentIndex + 1]; // 清单最新的排最前
+      if (previous !== undefined) {
+        dom.surfaceVersions.value = previous.value;
+        void restoreSelectedVersion();
+        return;
+      }
+    }
+    void requestJson(scoped('/api/rollback'), { method: 'POST', body: { version: Math.max(0, state.version - 1) } });
   });
 
   // 横幅上的按钮用事件委托：内容每次都是重新渲染的，逐次绑定容易漏

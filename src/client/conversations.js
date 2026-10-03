@@ -136,6 +136,63 @@ export function workspaceUrl(id) {
   return withConversation(WORKSPACE_PATH, id);
 }
 
+/** SPEC-025：界面版本清单地址（按对话隔离） */
+export const SURFACE_VERSIONS_PATH = '/api/surface/versions';
+
+export function surfaceVersionsUrl(id) {
+  return withConversation(SURFACE_VERSIONS_PATH, id);
+}
+
+/** `{ok, current, versions:[{version,ts,scopes,note}]}` → 稳定模型；坏输入退化为空 */
+export function normalizeSurfaceVersions(raw) {
+  const item = isRecord(raw) ? raw : {};
+  const list = Array.isArray(item.versions) ? item.versions : [];
+  const versions = [];
+  for (const entry of list) {
+    if (!isRecord(entry)) continue;
+    const version = finiteNumber(entry.version);
+    if (version === null) continue;
+    versions.push({
+      version,
+      ts: str(entry.ts),
+      scopes: Array.isArray(entry.scopes) ? entry.scopes.map((scope) => str(scope)).filter((scope) => scope !== '') : [],
+      note: str(entry.note),
+    });
+  }
+  const current = finiteNumber(item.current);
+  return { current, versions };
+}
+
+/** 版本下拉里的选项文案：`v3 · 21:04:12 · 2 个区块` */
+export function surfaceVersionLabel(entry) {
+  const item = isRecord(entry) ? entry : {};
+  const version = finiteNumber(item.version);
+  const parts = [`v${version === null ? '?' : version}`];
+  const ts = str(item.ts);
+  if (ts.length > 0) {
+    const date = new Date(ts);
+    if (!Number.isNaN(date.getTime())) {
+      const pad = (n) => String(n).padStart(2, '0');
+      parts.push(`${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`);
+    }
+  }
+  const scopes = Array.isArray(item.scopes) ? item.scopes.length : 0;
+  parts.push(scopes === 0 ? '空文档' : `${scopes} 个区块`);
+  return parts.join(' · ');
+}
+
+/** 版本下拉的 HTML（当前版本标注出来） */
+export function renderSurfaceVersions(raw) {
+  const { current, versions } = normalizeSurfaceVersions(raw);
+  return versions
+    .map((entry) => {
+      const selected = entry.version === current;
+      const label = surfaceVersionLabel(entry);
+      return `<option value="${escapeHtml(String(entry.version))}"${selected ? ' selected' : ''}>${escapeHtml(selected ? `${label}（当前）` : label)}</option>`;
+    })
+    .join('');
+}
+
 /** SPEC-019：浏览器面板的打开地址。**必须带对话**，否则服务端会回落到默认对话，
  * 在别的对话的工作空间里找不到文件（真 bug：c2 里的 universe.html 报 NOT_FOUND）。 */
 export const BROWSER_OPEN_PATH = '/api/browser/open';
