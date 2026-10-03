@@ -55,6 +55,21 @@ export class ConversationRegistry {
     return typeof id === 'string' && CONVERSATION_ID_PATTERN.test(id) && !id.includes('..');
   }
 
+  /**
+   * SPEC-026 SET-019：确保全局默认存在。
+   *
+   * 升级场景用它把「当前活跃对话配过的模型」提升为全局默认，
+   * 于是「新对话用我配过的模型」这个既有预期不退化，且此后全局是单一事实来源。
+   */
+  ensureGlobalFrom(source: ClientSession): { created: boolean; from: string } {
+    return source.ensureGlobalSettings();
+  }
+
+  /** 全局默认（给设置页看） */
+  globalSettings(): ReturnType<ClientSession['globalSettings']> {
+    return this.get(this.#active, { activate: false }).globalSettings();
+  }
+
   dirFor(id: string): string {
     if (!ConversationRegistry.isValidId(id)) throw new Error(`非法对话 id：${String(id)}`);
     return path.join(this.root, 'conversations', id);

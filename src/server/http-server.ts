@@ -113,6 +113,8 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
     // SPEC-020：所有既有路由都用 ?conversation=<id> 定位会话，省略即默认对话。
     // 用一个局部 `session` 遮蔽掉默认会话，既有路由因此**一行都不用改**。
     const conversationId = url.searchParams.get('conversation') ?? defaultSession.id ?? 'default';
+    // SPEC-026：`?scope=global` 表示"这一请求针对全局默认模型配置"
+    const scope = url.searchParams.get('scope');
     let session: ClientSession = defaultSession;
     if (registry !== undefined) {
       if (!ConversationRegistry.isValidId(conversationId)) {
@@ -166,12 +168,11 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       }
       readBody(req)
         .then((body) => {
-          // SPEC-015 SET-014：新对话从**当前活跃对话**继承模型配置，
-          // 而不是回落到内置默认（否则用户每开一个对话都要重配一次模型与 Key）
+          // SPEC-026 SET-019：新对话**跟随全局默认**（不再复制一份自己的配置，
+          // 否则"全局"形同虚设）。全局还不存在时，用当前活跃对话的配置建立它（幂等）。
           const source = registry.get(registry.active, { activate: false });
+          registry.ensureGlobalFrom(source);
           const created = registry.create(typeof body.title === 'string' ? body.title : undefined);
-          const inherit = registry.get(created.id);
-          inherit.inheritSettingsFrom(source);
           sendJson(res, 200, { ok: true, conversation: created });
         })
         .catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
@@ -325,13 +326,15 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
     }
 
     if (route === '/api/settings' && method === 'GET') {
-      sendJson(res, 200, session.publicSettings());
+      // SPEC-026：?scope=global 看全局默认，缺省看当前对话
+      sendJson(res, 200, scope === 'global' ? session.globalSettings() : session.publicSettings());
       return;
     }
 
     if (route === '/api/settings' && method === 'PUT') {
       readBody(req).then((body) => {
-        const result = session.updateSettings(body);
+        // SPEC-026 SET-020：scope=global 改的是全局默认，只影响没有覆盖的对话
+        const result = scope === 'global' ? session.updateGlobalSettings(body) : session.updateSettings(body);
         sendJson(res, result.ok ? 200 : 400, result);
       }).catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
       return;

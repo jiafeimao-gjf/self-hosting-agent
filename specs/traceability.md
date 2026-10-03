@@ -196,10 +196,16 @@
 | **SET-009** | specs/015-model-settings.md | 非法输入被拒绝：未知协议、空 `baseUrl`、空 `model` → 400 且不落盘。 | `test/settings.test.ts` · 非法输入被拒绝且不落盘 |
 | **SET-010** | specs/015-model-settings.md | 打码规则可测：长度足够的 Key 显示头尾、过短的 Key 全遮。 | `test/settings.test.ts` · 打码规则：足够长显示头尾，短的一律遮住 |
 | **SET-013** | specs/015-model-settings.md | 模型配置**按对话隔离**，且设置页作用在**当前对话**上：`GET/PUT/POST /api/settings*` 都接受 `?conversation=<id>`；在 c1 里读到/改到的必须是 c1 的配置，绝不是 default 的（真机踩过：c1 用 Ollama，设置页却显示 deepseek）；切换对话时若设置页开着要跟着重读。 | `test/settings.test.ts` · 模型配置按对话隔离：设置接口跟着 ?conversation= 走 |
-| **SET-014** | specs/015-model-settings.md | 新建对话**继承**当前活跃对话的模型配置（协议 / 端点 / 模型 / Key / 超时），而不是回落到内置默认——否则用户每开一个对话都要重配一次模型与 Key。已有配置的对话不被覆盖。 | `test/settings.test.ts` · 新建对话继承当前对话的模型配置，而不是回落到内置默认 |
+| **SET-014** | specs/015-model-settings.md | 新建对话**继承**当前活跃对话的模型配置（协议 / 端点 / 模型 / Key / 超时），而不是回落到内置默认——否则用户每开一个对话都要重配一次模型与 Key。已有配置的对话不被覆盖。 | `test/settings.test.ts` · 新建对话跟随全局默认：全局不存在时由当前活跃对话建立，而不是回落到内置默认 |
 | **SET-015** | specs/015-model-settings.md | 多对话之前的全局 `<root>/settings.json` 在启动时**幂等迁移**进默认对话：目标已存在则不覆盖（用户后来配的优先），老文件保留不删（不带 Key 的东西宁可多留一份也不悄悄删）。 | `test/settings.test.ts` · 旧位置 <root>/settings.json 幂等迁移进默认对话，老文件保留 |
 | **SET-016** | specs/015-model-settings.md | 列出可用模型：`POST /api/models` 按候选配置（不写盘）拉取列表——OpenAI 兼容走 `{baseUrl}/models`、Anthropic 走 `{baseUrl}/v1/models` + `x-api-key`；返回 `{ok, models:[{id,label?}], count}`，条目有上限；超时 / 连不上 / 鉴权失败 / 响应格式不对都给出**可归因**的错误码，且**绝不回显 Key**。 | `test/settings.test.ts` · 列模型：两家协议各走各的端点，错误可归因且绝不回显 Key<br>`test/settings.test.ts` · 列模型的 HTTP 接口：候选配置不写盘，非法配置 400 |
 | **SET-017** | specs/015-model-settings.md | 客户端「列出模型」：一次点击即列出端点上的模型并渲染成可点选的候选（`datalist` 提供输入联想 + 候选按钮**点一下即切换**，走与保存完全相同的路径）；本地 Ollama 必须能列出本机模型并尽量带上体积/参数量；列表为空或失败都显示原因，且**不阻断手动输入模型名**。 | `test/client-settings-ui.test.ts` · 列模型：不要求先填模型名，候选可点选、全部转义、失败也不阻断手动输入 |
+| **SET-018** | specs/026-model-switch.md | 配置解析顺序：对话有覆盖 → 用覆盖；没有 → 用全局；全局也没有 → 用内置默认。三条路径都要有测试。 | `test/model-switch.test.ts` · 配置解析顺序：对话覆盖 > 全局 > 内置默认 |
+| **SET-019** | specs/026-model-switch.md | 新对话跟随全局：新建的对话不写自己的配置文件，因此生效的是全局默认；**全局不存在**时用当前活跃对话的配置建立全局（建立后新对话跟随它，且重复调用不再改写）。 | `test/model-switch.test.ts` · 新对话跟随全局；全局不存在时用当前活跃对话建立（幂等） |
+| **SET-020** | specs/026-model-switch.md | 全局配置可读写：`GET/PUT /api/settings?scope=global`；改全局**不影响已有覆盖的对话**，也不影响它们的运行中配置。 | `test/model-switch.test.ts` · 改全局：影响没有覆盖的对话，不影响已有覆盖的对话<br>`test/model-switch.test.ts` · 设为全局默认：Key 不经浏览器，由服务端内部复制 |
+| **SET-021** | specs/026-model-switch.md | 本轮进行中拒绝设置变更：`busy` 时 `PUT /api/settings` 返回可读的拒绝原因，**不重启** Agent、不落盘；回合结束后同一请求成功。 | `test/model-switch.test.ts` · 本轮进行中拒绝设置变更：不落盘、不重启，回合结束后成功 |
+| **SET-022** | specs/026-model-switch.md | 输入框旁的模型切换器：选项来自模型清单且**当前模型一定在列表里**（端点没返回它也不能丢）；`busy` 时禁用并给出原因；切换只作用于当前对话（`?conversation=` 带对）。 | `test/model-switch.test.ts` · 输入框旁的切换器：当前模型一定在列表里，busy 时禁用并说明原因 |
+| **SET-023** | specs/026-model-switch.md | 切换真的生效：设置变更后 Agent 以新模型重启（`restarted: true`），且历史对话不丢。 | `test/model-switch.test.ts` · 切换真的生效：Agent 按新模型重启，历史不丢 |
 | **SHELL-001** | specs/023-shell.md | 默认不注册：不传 `--allow-shell` 时 `shell.run` 不在工具表里（模型看不到），传了才在。 | `test/shell.test.ts` · 默认不注册 shell：不启用就看不到这个工具，启用才在<br>`test/shell.test.ts` · 子进程只声明宿主真正注册的工具（没启用就不声明 shell.run） |
 | **SHELL-002** | specs/023-shell.md | 每次调用都过审批门：策略说 `deny` 时**不执行任何命令**，并返回明确的拒绝错误。 | `test/shell.test.ts` · 审批说拒绝就一行命令都不执行<br>`test/shell.test.ts` · 端到端：子进程调 shell.run → 人类批准 → 命令真的执行 → 结果回给 Agent |
 | **SHELL-003** | specs/023-shell.md | 执行结果形状稳定：`{code, stdout, stderr, durationMs, timedOut, truncated}`；退出码原样透传（非 0 不是异常）。 | `test/shell.test.ts` · 执行结果形状稳定：退出码原样透传，非 0 不算异常 |
@@ -286,7 +292,7 @@
 
 ## 统计
 
-- 验收标准：**279** 条
-- 已覆盖：**279** 条
+- 验收标准：**285** 条
+- 已覆盖：**285** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

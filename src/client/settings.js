@@ -445,6 +445,74 @@ export function renderModelOptions(models, current) {
     .join('');
 }
 
+/**
+ * SPEC-026 SET-022：输入框旁切换器的选项。
+ *
+ * **当前模型排在第一位且一定在列表里**：端点可能没把它列出来（模型被改名、下线、
+ * 或列表接口暂时失败），这时选择器不能显示空白——它至少得正确显示"现在是哪个"。
+ */
+export function modelSwitchOptions(models, current) {
+  const list = normalizeModelOptions({ models: Array.isArray(models) ? models : [] });
+  const active = str(current).trim();
+  const options = active === '' ? [] : [{ id: active, label: '' }];
+  for (const model of list) {
+    if (model.id === active) continue; // 去重：列表里已经有了
+    options.push(model);
+  }
+  return options;
+}
+
+/** 本轮进行中不许切模型：会重启 Agent，把跑到一半的回合腰斩 */
+export function modelSwitchDisabled(busy) {
+  return busy === true;
+}
+
+/** 禁用时要说明**为什么**，否则用户只会觉得"点了没反应" */
+export function modelSwitchTitle(busy) {
+  return busy === true ? '本轮结束后才能切换模型' : '切换本对话的模型';
+}
+
+/**
+ * 切换器的 `<option>` 串（元素本身是 index.html 里的静态 `<select id="model-switch">`）。
+ *
+ * 全部转义：模型名来自端点，属于不可信输入。
+ */
+export function renderModelSwitchOptions(options, current) {
+  const list = Array.isArray(options) ? options : [];
+  const active = str(current).trim();
+  return list
+    .map((model) => {
+      const id = str(model?.id);
+      if (id === '') return '';
+      const selected = id === active ? ' selected' : '';
+      return `<option value="${escapeHtml(id)}"${selected}>${escapeHtml(id)}</option>`;
+    })
+    .join('');
+}
+
+/**
+ * SPEC-026 SET-020：设置页里的「全局默认」文案。
+ *
+ * `isSet: false` 表示还没有全局配置——这时要说清"还没设过"，不能拿当前对话的值冒充全局。
+ */
+export function globalModelText(raw) {
+  const item = isRecord(raw) ? raw : {};
+  const model = str(item.model);
+  if (model === '') return '（还没设置全局默认）';
+  const label = str(item.label);
+  return label === '' ? model : `${model} · ${label}`;
+}
+
+/** 全局默认那一行的 HTML */
+export function renderGlobalModel(raw) {
+  const item = isRecord(raw) ? raw : {};
+  const isSet = item.isSet === true;
+  return (
+    `<span class="global-model-text" data-set="${isSet ? 'yes' : 'no'}">${escapeHtml(globalModelText(item))}</span>` +
+    `<span class="settings-hint">${isSet ? '新对话默认用它；已单独配过的对话不受影响' : '还没设过——新对话会用内置默认（本机 Ollama）'}</span>`
+  );
+}
+
 /** 列模型的状态文案（成功 / 失败都有话说） */
 export function modelsStatusText(result) {
   const item = isRecord(result) ? result : {};

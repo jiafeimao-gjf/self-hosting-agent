@@ -451,11 +451,12 @@ test('模型配置按对话隔离：设置接口跟着 ?conversation= 走', asyn
 });
 
 // @spec SET-014
-test('新建对话继承当前对话的模型配置，而不是回落到内置默认', async () => {
+test('新建对话跟随全局默认：全局不存在时由当前活跃对话建立，而不是回落到内置默认', async () => {
   const root = tempDir('inherit-root');
   const registry = new ConversationRegistry({
     root,
-    open: (id, dir) => new ClientSession({ dir, id, lead: { script: [{ text: 'ok', done: true }] } }),
+    // SPEC-026：全局层要靠 root 定位（<root>/global-settings.json）
+    open: (id, dir) => new ClientSession({ dir, id, root, lead: { script: [{ text: 'ok', done: true }] } }),
   });
   const session = registry.get('default');
   session.updateSettings({
@@ -466,14 +467,25 @@ test('新建对话继承当前对话的模型配置，而不是回落到内置�
     timeoutMs: 120000,
   });
 
+  const globalFile = path.join(root, 'global-settings.json');
+  assert.equal(fs.existsSync(globalFile), false, '一开始还没有全局配置');
+
   const server = await startServer({ session, registry, port: 0 });
   try {
     const response = await fetch(`${server.url}/api/conversations`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ title: '继承者' }),
+      body: JSON.stringify({ title: '跟随者' }),
     });
     const id = String(((await response.json()) as { conversation: { id: string } }).conversation.id);
+
+    // 建全局这件事在新建对话时发生（幂等）
+    assert.equal(fs.existsSync(globalFile), true, '全局不存在时应当由活跃对话建立它');
+    assert.equal(
+      fs.existsSync(path.join(root, 'conversations', id, 'settings.json')),
+      false,
+      '新对话不写自己的配置，纯跟随全局',
+    );
 
     const settings = (await (await fetch(`${server.url}/api/settings?conversation=${id}`)).json()) as {
       model: string;
@@ -482,17 +494,17 @@ test('新建对话继承当前对话的模型配置，而不是回落到内置�
       timeoutMs: number;
       label: string;
     };
-    assert.equal(settings.model, 'deepseek-flash', '新对话必须继承模型，而不是回到 qwen3:4b');
+    assert.equal(settings.model, 'deepseek-flash', '新对话必须用全局默认，而不是回到 qwen3:4b');
     assert.equal(settings.baseUrl, 'https://api.deepseek.com/v1');
     assert.equal(settings.timeoutMs, 120000);
-    assert.match(settings.apiKeyMasked, /9876$/, 'Key 也要继承，否则新对话根本用不了');
+    assert.match(settings.apiKeyMasked, /9876$/, 'Key 也要跟着走，否则新对话根本用不了');
     assert.notEqual(settings.label, '本机 Ollama');
 
-    // 已配过的对话不被覆盖
-    const again = registry.get(id);
-    const before = again.publicSettings().model;
-    again.inheritSettingsFrom(session);
-    assert.equal(again.publicSettings().model, before);
+    // 幂等：全局已存在时再调不覆盖（否则用户后来改的全局会被旧配置顶掉）
+    session.updateSettings({ model: '后来改的' });
+    assert.equal(registry.ensureGlobalFrom(session).created, false);
+    const globalNow = JSON.parse(fs.readFileSync(globalFile, 'utf8')) as { model: string };
+    assert.equal(globalNow.model, 'deepseek-flash');
   } finally {
     await server.close();
     await registry.closeAll();

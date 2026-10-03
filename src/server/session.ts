@@ -99,6 +99,11 @@ export interface SessionOptions {
   logEcho?: boolean;
   /** 初始模型设置（命令行参数/环境变量）；持久化过的设置优先 */
   modelSettings?: Partial<ModelSettings>;
+  /**
+   * SPEC-026：客户端数据根目录（`<root>/settings.json` 是**全局**模型配置）。
+   * 不传就没有全局层——解析退回「对话覆盖 > 内置默认」，与加全局之前的行为一致。
+   */
+  root?: string;
 }
 
 export class ClientSession {
@@ -113,6 +118,8 @@ export class ClientSession {
   #busySince: number | null = null;
   #started = false;
   #settingsStore: SettingsStore;
+  #globalStore: SettingsStore | null;
+  #modelDefaults: Partial<ModelSettings>;
   #model: ModelSettings;
   #restarting: Promise<void> = Promise.resolve();
   #closed = false;
@@ -160,12 +167,15 @@ export class ClientSession {
       this.logger.warn('事件日志存在损坏行，已跳过', { count: issues.length, first: issues[0] });
     }
 
-    // SPEC-015：设置持久化在会话目录；命令行给的只是「还没配过时」的初值
+    // SPEC-026：模型配置分两层——对话覆盖（会话目录）> 全局默认（<root>/settings.json）
     this.#settingsStore = new SettingsStore({ file: path.join(this.dir, 'settings.json') });
-    // 界面上配过的设置优先；命令行参数只在「还没配过」时当默认值
-    this.#model = this.#settingsStore.exists()
-      ? this.#settingsStore.load()
-      : { ...DEFAULT_MODEL_SETTINGS, ...(options.modelSettings ?? {}) };
+    // 注意文件名：**不能**叫 settings.json。老版本（多对话之前）的全局配置就叫
+    // `<root>/settings.json`，而且迁移时"老文件保留不删"——若沿用同名，升级后会把那份
+    // 陈旧配置当成新的全局默认，用户的新对话会莫名其妙回到旧模型。
+    this.#globalStore =
+      options.root === undefined ? null : new SettingsStore({ file: path.join(options.root, 'global-settings.json') });
+    this.#modelDefaults = options.modelSettings ?? {};
+    this.#model = this.#resolveModel();
 
     // P3：接上源码管理器，Agent 才能改自己的界面代码（且必须过自检门禁）
     const clientSource =
@@ -250,26 +260,124 @@ export class ClientSession {
   }
 
   /**
+   * SPEC-026 SET-018：解析顺序 = 对话覆盖 > 全局默认 > 内置默认。
+   *
+   * 对话**没有**自己的文件时才算「跟随全局」——这正是新对话不复制配置也能用上全局的原因。
+   */
+  #resolveModel(): ModelSettings {
+    if (this.#settingsStore.exists()) return this.#settingsStore.load();
+    if (this.#globalStore !== null && this.#globalStore.exists()) return this.#globalStore.load();
+    return { ...DEFAULT_MODEL_SETTINGS, ...this.#modelDefaults };
+  }
+
+  /** 全局默认（给设置页看）；没有全局文件时给出内置默认并标明还没配过 */
+  globalSettings(): PublicSettings & { isSet: boolean } {
+    if (this.#globalStore === null) {
+      return { ...this.#settingsStore.toPublic({ ...DEFAULT_MODEL_SETTINGS, ...this.#modelDefaults }), isSet: false };
+    }
+    if (!this.#globalStore.exists()) {
+      return { ...this.#settingsStore.toPublic({ ...DEFAULT_MODEL_SETTINGS, ...this.#modelDefaults }), isSet: false };
+    }
+    return { ...this.#settingsStore.toPublic(this.#globalStore.load()), isSet: true };
+  }
+
+  /**
+   * SPEC-026 SET-020：写全局默认。
+   *
+   * 只影响**没有覆盖**的对话——已经单独配过的对话保持自己的选择（否则用户会被莫名其妙换掉模型）。
+   */
+  updateGlobalSettings(input: unknown): { ok: boolean; settings?: PublicSettings; restarted?: boolean; error?: string } {
+    const guard = this.#guardIdle('改全局模型配置');
+    if (guard !== null) return { ok: false, error: guard };
+    if (this.#globalStore === null) {
+      return { ok: false, error: 'NO_GLOBAL_SCOPE: 这个运行目录没有全局配置层（启动时没给 root）' };
+    }
+
+    // `copyFromConversation`：把**当前对话的生效配置**（含 Key）复制为全局默认。
+    // 为什么必须由服务端来做：浏览器永远拿不到明文 Key（SET-003 只回打码），
+    // 所以界面上的"设为全局默认"只能传这个信号，由服务端在内部复制。
+    const copyFromConversation = typeof input === 'object' && input !== null && (input as Record<string, unknown>).copyFromConversation === true;
+    const payload = copyFromConversation ? { ...this.#model } : input;
+
+    // 以「当前生效值」为底：只传 model 时不该把协议/端点打回默认
+    const base = this.#globalStore.exists() ? this.#globalStore.load() : { ...this.#model };
+    const saved = this.#globalStore.save(payload, base);
+    if (!saved.ok) return { ok: false, error: `${saved.error.code}: ${saved.error.message}` };
+
+    let restarted = false;
+    if (!this.#settingsStore.exists()) {
+      // 本对话跟随全局 → 立刻重新解析并让 Agent 用新配置起来
+      const changed = JSON.stringify(saved.value) !== JSON.stringify(this.#model);
+      this.#model = this.#resolveModel();
+      if (changed) {
+        restarted = true;
+        this.#restartForSettings();
+      }
+    }
+
+    this.#emit({ type: 'settings', data: this.publicSettings() });
+    this.#emit({ type: 'state', data: this.state() });
+    return { ok: true, settings: this.publicSettings(), restarted };
+  }
+
+  /**
+   * SPEC-026 SET-019：建立全局默认（幂等）。
+   *
+   * 升级场景：老用户只有各对话自己的 settings.json，没有全局文件——
+   * 拿当前活跃对话的配置建立它，于是「新对话用我配过的模型」这个既有预期不退化，
+   * 且此后全局成为单一事实来源。已存在就**不改写**。
+   */
+  ensureGlobalSettings(): { created: boolean; from: string } {
+    if (this.#globalStore === null) return { created: false, from: '' };
+    if (this.#globalStore.exists() || !this.#settingsStore.exists()) return { created: false, from: '' };
+
+    try {
+      fs.mkdirSync(path.dirname(this.#globalStore.file), { recursive: true });
+      fs.copyFileSync(this.#settingsStore.file, this.#globalStore.file);
+      fs.chmodSync(this.#globalStore.file, 0o600);
+    } catch {
+      return { created: false, from: '' };
+    }
+    this.logger.info('用当前对话的配置建立全局默认', { conversation: this.id, file: this.#globalStore.file });
+    return { created: true, from: this.id };
+  }
+
+  /** 本轮进行中不许改配置：会重启 Agent，把跑到一半的回合腰斩 */
+  #guardIdle(what: string): string | null {
+    if (this.#busySince === null) return null;
+    const seconds = Math.round((Date.now() - this.#busySince) / 1000);
+    return `BUSY: 本轮还在进行（已 ${seconds}s），${what}要等这一轮结束`;
+  }
+
+  /** 按新配置重启 Agent（回收旧进程 → 重新拉起）；历史由事件日志投影而来，不会丢 */
+  #restartForSettings(): void {
+    this.#restarting = this.#restarting.then(async () => {
+      // 关停过程中不能再拉起新进程，否则会留下无法回收的孤儿 Agent
+      if (this.#closed) return;
+      this.#started = false;
+      await this.runner.reclaim();
+      if (this.#closed) return;
+      this.start();
+    });
+  }
+
+  /**
    * 保存设置并让它**真的生效**：回收旧 Agent（它们用的是旧模型），按新环境重新拉起。
    * 历史不会丢——上下文本来就由事件日志投影而来。
    */
   updateSettings(input: unknown): { ok: boolean; settings?: PublicSettings; restarted?: boolean; error?: string } {
+    // SPEC-026 SET-021：**本轮进行中不换配置**。界面禁用选择器只是体验，
+    // 这里拒绝才是不变量——否则任何直接打 API 的路径都能把跑到一半的回合腰斩。
+    const guard = this.#guardIdle('改模型配置');
+    if (guard !== null) return { ok: false, error: guard };
+
     const saved = this.#settingsStore.save(input, this.#model);
     if (!saved.ok) return { ok: false, error: `${saved.error.code}: ${saved.error.message}` };
 
     const changed = JSON.stringify(saved.value) !== JSON.stringify(this.#model);
     this.#model = saved.value;
 
-    if (changed) {
-      this.#restarting = this.#restarting.then(async () => {
-        // 关停过程中不能再拉起新进程，否则会留下无法回收的孤儿 Agent
-        if (this.#closed) return;
-        this.#started = false;
-        await this.runner.reclaim();
-        if (this.#closed) return;
-        this.start();
-      });
-    }
+    if (changed) this.#restartForSettings();
 
     this.#emit({ type: 'settings', data: this.publicSettings() });
     this.#emit({ type: 'state', data: this.state() });

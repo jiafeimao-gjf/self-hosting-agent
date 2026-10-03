@@ -45,7 +45,16 @@ import {
 } from './conversations.js';
 import { escapeHtml, renderViewSpec } from './renderer.js';
 import { looksLikeMarkdown, renderMarkdown } from './markdown.js';
-import { createSettingsPage, currentModelText } from './settings.js';
+import {
+  createSettingsPage,
+  currentModelText,
+  effectiveModelFromState,
+  modelSwitchDisabled,
+  modelSwitchOptions,
+  modelSwitchTitle,
+  renderGlobalModel,
+  renderModelSwitchOptions,
+} from './settings.js';
 
 /** 连接状态 → 中文文案 */
 export const CONNECTION_LABELS = {
@@ -491,6 +500,9 @@ function boot() {
     input: document.getElementById('input'),
     rollback: document.getElementById('rollback'),
     surfaceVersions: document.getElementById('surface-versions'),
+    modelSwitch: document.getElementById('model-switch'),
+    globalModel: document.getElementById('global-model'),
+    setGlobal: document.getElementById('settings-set-global'),
     surfaceRestore: document.getElementById('surface-restore'),
     interrupt: document.getElementById('interrupt'),
     agents: document.getElementById('agents'),
@@ -558,6 +570,18 @@ function boot() {
      */
     commandLog: [],
   };
+
+  /**
+   * 最近一次服务端 `/api/state`。
+   *
+   * 模型信息只在这里——上面那个 `state` 存的是**渲染态**（iframe / 气泡 / …），
+   * 拿它去读模型会读成空（第一版就是这么错的：选择器落在列表第一项）。
+   */
+  let lastServerState = null;
+  /** SPEC-026：模型清单缓存（按协议+端点缓存，切对话换端点时才重探） */
+  let modelListCache = { key: '', options: [] };
+  /** 正在探测清单：避免 sync ⇄ load 互相触发成环 */
+  let modelSwitchLoading = false;
 
   /**
    * SPEC-020：当前对话。所有请求（SSE / state / message / command / browser 事件 /
@@ -811,6 +835,7 @@ function boot() {
   }
 
   function applyState(raw) {
+    lastServerState = isRecord(raw) ? raw : null;
     const snapshot = normalizeState(raw);
     state.version = snapshot.version;
     setSurface(snapshot.html, snapshot.version);
@@ -846,6 +871,9 @@ function boot() {
     dom.messages.scrollTop = dom.messages.scrollHeight;
 
     setBusy(raw);
+    // SPEC-026：切换器的禁用与否取决于忙碌状态——**必须放在 setBusy 之后**，
+    // 否则它读到的是上一个事件的忙碌态（真机上表现为"忙的时候还让人点"）
+    syncModelSwitch();
 
     // SPEC-017：/api/state 若带了生效模型信息，顶栏 chip 跟着更新（没有就不冒充）
     settingsPage.applyEffectiveModel(raw);
@@ -974,8 +1002,12 @@ function boot() {
         await switcher.load();
         switcher.setActive(target);
         // 设置也是按对话存的：设置页开着的话，跟着切到这个对话的配置
-        if (settingsPage.isOpen()) await settingsPage.open();
+        if (settingsPage.isOpen()) {
+          await settingsPage.open();
+          await loadGlobalModel();
+        }
         await workspacePanel.reload(target);
+        await loadModelSwitch(true); // SPEC-026：不同对话可能配了不同端点，清单要重新探测
         if (pendingSwitch === null) break;
         target = pendingSwitch;
         pendingSwitch = null;
@@ -1256,7 +1288,10 @@ function boot() {
   });
 
   if (settingsNodes.open !== undefined) {
-    settingsNodes.open.addEventListener('click', () => settingsPage.open());
+    settingsNodes.open.addEventListener('click', () => {
+      void settingsPage.open();
+      void loadGlobalModel(); // SPEC-026：顺手刷一下全局默认那一行
+    });
   }
 
   /**
@@ -1434,11 +1469,132 @@ function boot() {
   });
 
   /**
+   * SPEC-026 SET-022：输入框旁的模型切换器。
+   *
+   * 三件事：列出模型（`/api/models`，用**本对话**的配置去探测）、同步选中项、
+   * 本轮进行中禁用（换模型要重启 Agent，会把跑到一半的回合腰斩——服务端同样会拒绝）。
+   */
+
+  function modelCacheKey(model) {
+    const item = isRecord(model) ? model : {};
+    return `${String(item.protocol ?? '')}|${String(item.baseUrl ?? '')}`;
+  }
+
+  async function loadModelSwitch(force = false) {
+    const select = dom.modelSwitch;
+    if (select === null || select === undefined || modelSwitchLoading) return;
+
+    const current = effectiveModelFromState(lastServerState)?.model ?? '';
+    const key = modelCacheKey(effectiveModelFromState(lastServerState));
+    if (!force && modelListCache.key === key && modelListCache.options.length > 0) {
+      syncModelSwitch();
+      return;
+    }
+
+    modelSwitchLoading = true;
+    try {
+      const response = await requestJson(scoped('/api/models'), { method: 'POST', body: {} });
+      const data = isRecord(response?.data) ? response.data : {};
+      const models = Array.isArray(data.models) ? data.models : [];
+      // 探测失败不算错：至少把当前模型显示出来，选择器不能空着
+      modelListCache = { key, options: modelSwitchOptions(models, current) };
+    } finally {
+      modelSwitchLoading = false;
+    }
+    syncModelSwitch();
+  }
+
+  /** 把当前模型 / 忙碌状态同步到选择器上（切换对话、设置变更、轮次结束都会调） */
+  function syncModelSwitch() {
+    const select = dom.modelSwitch;
+    if (select === null || select === undefined) return;
+    const current = effectiveModelFromState(lastServerState)?.model ?? '';
+    const options = modelSwitchOptions(modelListCache.options, current);
+    // 忙碌用客户端自己的标记：它由 setBusy() 维护，与服务端 busy/busySince 同源
+    const busy = state.busySince !== null;
+
+    select.innerHTML = renderModelSwitchOptions(options, current);
+    select.disabled = modelSwitchDisabled(busy);
+    select.title = modelSwitchTitle(busy);
+    select.setAttribute('data-current', current);
+
+    // 还没探测过清单（首次 / 换了端点）：异步补一次。先把当前模型显示出来，
+    // 不让选择器空着等网络。
+    if (modelListCache.options.length === 0 && !modelSwitchLoading) void loadModelSwitch();
+  }
+
+  /** SPEC-026 SET-020：读全局默认（打开设置页时刷新） */
+  async function loadGlobalModel() {
+    if (dom.globalModel === null || dom.globalModel === undefined) return;
+    const response = await requestJson(scoped('/api/settings') + '&scope=global', { method: 'GET' });
+    const data = isRecord(response?.data) ? response.data : {};
+    dom.globalModel.innerHTML = renderGlobalModel(data);
+  }
+
+  /** SET-020：把当前对话的配置（含 Key，服务端内部复制）设为全局默认 */
+  async function setGlobalFromConversation() {
+    const response = await requestJson(scoped('/api/settings') + '&scope=global', {
+      method: 'PUT',
+      body: { copyFromConversation: true },
+    });
+    const data = isRecord(response?.data) ? response.data : {};
+    if (response === null || response.ok !== true || data.ok === false) {
+      if (dom.globalModel !== null && dom.globalModel !== undefined) {
+        dom.globalModel.textContent = `设为全局默认失败：${String(data.error ?? `HTTP ${String(response?.status ?? '?')}`)}`;
+      }
+      return;
+    }
+    await loadGlobalModel();
+    await loadModelSwitch(true); // 清单可能因为端点变化而变
+  }
+
+  if (dom.setGlobal !== null && dom.setGlobal !== undefined) {
+    dom.setGlobal.addEventListener('click', () => void setGlobalFromConversation());
+  }
+
+  async function switchModel(next) {
+    const target = textOf(next).trim();
+    if (target === '') return;
+    const select = dom.modelSwitch;
+    const previous = select?.getAttribute('data-current') ?? '';
+
+    // 只改模型：协议 / 端点 / Key 保持不变（服务端按"留空 = 不修改"处理其余字段）
+    const response = await requestJson(scoped('/api/settings'), { method: 'PUT', body: { model: target } });
+    const data = isRecord(response?.data) ? response.data : {};
+    if (response === null || response.ok !== true || data.ok === false) {
+      // 失败要说清原因（最常见的两条：本轮还在进行 / 模型名不被接受），并把选择拨回去
+      appendMessage(
+        renderMessage({
+          kind: 'error',
+          agent: '宿主',
+          text: `切换模型失败：${String(data.error ?? `HTTP ${String(response?.status ?? '?')}`)}`,
+        }),
+      );
+      if (select !== null && select !== undefined && previous !== '') select.value = previous;
+      syncModelSwitch();
+      return;
+    }
+    pushTimeline({ type: 'settings.model', agent: 'human', ts: new Date().toISOString() });
+    await loadModelSwitch(true);
+  }
+
+  if (dom.modelSwitch !== null && dom.modelSwitch !== undefined) {
+    dom.modelSwitch.addEventListener('change', (event) => {
+      const target = event.target;
+      void switchModel(target instanceof HTMLSelectElement ? target.value : '');
+    });
+  }
+
+  /**
    * SPEC-025：界面版本清单。
    *
    * 之前那个「回滚」按钮靠 `window.prompt` 让人**凭记忆敲版本号**——列表出来之后
    * 人类能看见每一版是什么时候画的、有几个区块，点一下就能回去。
    */
+  async function refreshModelSwitch() {
+    await loadModelSwitch(true);
+  }
+
   async function loadSurfaceVersions() {
     if (dom.surfaceVersions === null || dom.surfaceVersions === undefined) return;
     const response = await requestJson(scoped(SURFACE_VERSIONS_PATH), { method: 'GET' });

@@ -50,6 +50,9 @@
           <textarea id="input" class="input" rows="2" placeholder="跟 Agent 说点什么…（/ 开头是命令）" aria-label="人类输入"></textarea>
           <!-- SPEC-020：输入以 / 开头时显示「这是命令」，只由前缀路由决定走哪个端点 -->
           <span id="command-hint" class="command-hint" hidden>回车执行命令</span>
+          <!-- SPEC-026：本对话的模型切换器。本轮进行中禁用（换模型要重启 Agent，
+               会把跑到一半的回合腰斩）——服务端也会拒绝，界面禁用只是提前告知。 -->
+          <select id="model-switch" class="select-compact" aria-label="本对话的模型" title="切换本对话的模型"></select>
           <button id="send" class="btn btn-primary" type="submit">发送</button>
         </form>
       </section>
@@ -323,6 +326,16 @@
           <div class="settings-presets">
             <span class="field-label">预设</span>
             <span id="presets" class="preset-row"></span>
+          </div>
+
+          <!-- SPEC-026：全局默认模型。改它只影响「没单独配过」的对话；
+               Key 不进浏览器，所以"设为全局默认"由服务端在内部把当前对话的配置复制过去。 -->
+          <div class="settings-global">
+            <span class="field-label">全局默认</span>
+            <div id="global-model" class="global-model-row">（读取中…）</div>
+            <button id="settings-set-global" class="btn" type="button" title="把当前对话的配置（含 Key）复制为全局默认">
+              用当前对话的配置设为全局默认
+            </button>
           </div>
 
           <div class="settings-actions">

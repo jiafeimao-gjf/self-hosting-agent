@@ -274,9 +274,15 @@ async function runServe(argv: string[]): Promise<number> {
   const allowShell = args['allow-shell'] === 'true';
   const shell = allowShell ? createShellRunner() : undefined;
 
+  // SPEC-026：全局配置层的根（对话目录都在它下面）
+  const settingsRoot = path.resolve(dir);
   const makeSessionOptions = (id: string, dir: string): ConstructorParameters<typeof ClientSession>[0] => ({
     dir,
     id,
+    // SPEC-026：全局模型配置在 <root>/global-settings.json（serve 的 --dir 就是 root）。
+    // 注意不能直接用形参 dir —— 那个是「对话目录」。
+    root: settingsRoot,
+
     agentEnv,
     modelSettings,
     // 中等风险动作（拉子进程、改客户端源码）沿用「人类在场即放行」——但每一次都留痕可查；
@@ -299,6 +305,11 @@ async function runServe(argv: string[]): Promise<number> {
     },
   });
   const session = registry.get('default');
+
+  // SPEC-026 SET-019：启动时确保「全局模型配置」存在。
+  // 升级用户只有各对话的配置，没有全局文件——用当前活跃对话的配置建立它（幂等），
+  // 这样"新对话用我配过的模型"这个既有预期不退化，而且不必等到第一次新建对话。
+  registry.ensureGlobalFrom(session);
 
   // 宿主崩溃兜底：不留一段没人看的堆栈
   process.on('uncaughtException', (err) => {

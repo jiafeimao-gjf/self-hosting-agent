@@ -1743,3 +1743,38 @@ body {
   font: inherit;
   font-size: 12.5px;
 }
+
+/* SPEC-026：输入框旁的模型切换器 */
+#model-switch {
+  max-width: 190px;
+  min-width: 120px;
+}
+
+#model-switch:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+/* SPEC-026：设置页的全局默认区 */
+.settings-global {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+
+.global-model-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.global-model-text {
+  font-size: 13.5px;
+}
+
+.global-model-text[data-set='no'] {
+  color: var(--text-muted);
+}
