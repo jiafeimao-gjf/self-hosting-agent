@@ -463,11 +463,21 @@ export class ClientSession {
 
     const ext = target.toLowerCase();
     if (!ext.endsWith('.html') && !ext.endsWith('.htm')) {
+      this.logger.warn('浏览器打开失败', { conversation: this.id, path: target, code: 'NOT_HTML' });
       return { ok: false, error: 'NOT_HTML: 浏览器面板只渲染 .html / .htm 文件' };
     }
 
     const read = this.runner.workspace.read({ path: target });
-    if (!read.ok) return { ok: false, error: `${read.code}: ${read.reason}` };
+    if (!read.ok) {
+      // 失败也要留痕：不然「在浏览器里打开失败了」只能靠猜是哪个对话、哪个路径
+      this.logger.warn('浏览器打开失败', {
+        conversation: this.id,
+        path: target,
+        workspace: this.runner.workspace.root,
+        code: read.code,
+      });
+      return { ok: false, error: `${read.code}: ${read.reason}` };
+    }
 
     const result = this.runner.browser.render({
       html: read.content,

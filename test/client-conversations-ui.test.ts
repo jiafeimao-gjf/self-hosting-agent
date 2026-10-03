@@ -11,6 +11,7 @@ import {
   EMPTY_FILES_TEXT,
   STALE_SERVER_TEXT,
   TRUNCATED_TEXT,
+  browserOpenUrl,
   canDeleteConversation,
   commandActionOf,
   commandErrorText,
@@ -550,4 +551,38 @@ test('版本漂移要可诊断：旧服务端 404/405 明确提示重启，而�
   // 真错误仍然照原样透出
   assert.equal(commandErrorText({ ok: false, error: '未知命令：/x' }, 400), '未知命令：/x');
   assert.equal(fileListErrorText(null, 0).includes('加载文件列表失败'), true);
+});
+
+// @spec WS-012
+test('按对话隔离的接口必须带对话参数，且三处用的是同一个 id', async () => {
+  // 真 bug：/api/browser/open 漏了 ?conversation=，服务端回落到默认对话，
+  // 于是 c2 里的 universe.html 报 NOT_FOUND —— 列表对、打开错对话
+  assert.equal(browserOpenUrl('c2'), '/api/browser/open?conversation=c2');
+  // 缺省即默认对话：省略参数是有意的（SPEC-020 §一），别画蛇添足地补上 default=…
+  assert.equal(browserOpenUrl(undefined).includes('conversation='), false);
+  assert.equal(browserOpenUrl('default').includes('conversation='), false);
+  assert.equal(workspaceUrl('c2').includes('conversation=c2'), true);
+  assert.equal(workspaceFileUrl('c2', 'a.html').includes('conversation=c2'), true);
+
+  // 面板控制器：三处请求都要落在面板自己那个对话上
+  const seen: string[] = [];
+  const panel = createWorkspacePanel({
+    nodes: { list: null, empty: null, status: null, content: null, root: null },
+    request: async (path: string) => {
+      seen.push(path);
+      if (path.includes('/api/workspace?')) {
+        return { ok: true, status: 200, data: { ok: true, files: [{ path: 'universe.html', bytes: 12, mtime: '' }] } };
+      }
+      if (path.includes('/api/browser/open')) return { ok: true, status: 200, data: { ok: true, version: 1 } };
+      return { ok: true, status: 200, data: { ok: true, content: 'x', bytes: 1 } };
+    },
+  });
+
+  await panel.reload('c2');
+  await panel.openFile('universe.html');
+  await panel.openInBrowser('universe.html');
+
+  for (const path of seen) {
+    assert.match(path, /conversation=c2/, `每个按对话隔离的请求都要带同一个对话：${path}`);
+  }
 });

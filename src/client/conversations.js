@@ -136,6 +136,14 @@ export function workspaceUrl(id) {
   return withConversation(WORKSPACE_PATH, id);
 }
 
+/** SPEC-019：浏览器面板的打开地址。**必须带对话**，否则服务端会回落到默认对话，
+ * 在别的对话的工作空间里找不到文件（真 bug：c2 里的 universe.html 报 NOT_FOUND）。 */
+export const BROWSER_OPEN_PATH = '/api/browser/open';
+
+export function browserOpenUrl(id) {
+  return withConversation(BROWSER_OPEN_PATH, id);
+}
+
 /**
  * 工作空间单文件地址：`/api/workspace/file?conversation=<id>&path=<p>`。
  * `path` 是不可信输入，必须 `encodeURIComponent`。
@@ -743,7 +751,8 @@ export function createWorkspacePanel(options) {
     const target = str(path);
     if (target.length === 0) return false;
     if (request === null) return false;
-    const response = await request('/api/browser/open', { method: 'POST', body: { path: target } });
+    // 用面板自己的 `current`：列表是从这个对话拉来的，打开也必须打在同一个对话上
+    const response = await request(browserOpenUrl(current), { method: 'POST', body: { path: target } });
     if (response === null || response.ok !== true) {
       const data = isRecord(response?.data) ? response.data : {};
       setStatus(`在浏览器打开失败：${serverErrorText(data, response?.status ?? 0)}`, 'fail');

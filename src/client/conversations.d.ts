@@ -62,6 +62,10 @@ export declare function streamUrl(id: unknown): string;
 export declare function workspaceUrl(id: unknown): string;
 
 /** 工作空间单文件地址（`path` 经过 encodeURIComponent） */
+/** SPEC-019：浏览器面板的打开地址（带当前对话） */
+export declare const BROWSER_OPEN_PATH: string;
+export declare function browserOpenUrl(id: unknown): string;
+
 export declare function workspaceFileUrl(id: unknown, path: unknown): string;
 
 // ---------------------------------------------------------------------------
