@@ -1615,3 +1615,113 @@ body {
 .file-action:hover {
   background: rgba(34, 211, 238, 0.14);
 }
+
+/* SPEC-024：Agent 输出里的 Markdown 排版（消息气泡内的富文本） */
+.md > *:first-child {
+  margin-top: 0;
+}
+
+.md > *:last-child {
+  margin-bottom: 0;
+}
+
+.md-p {
+  margin: 0.45em 0;
+  line-height: 1.55;
+}
+
+.md-h1,
+.md-h2,
+.md-h3,
+.md-h4,
+.md-h5,
+.md-h6 {
+  margin: 0.7em 0 0.35em;
+  line-height: 1.3;
+}
+
+.md-h1 {
+  font-size: 1.22em;
+}
+
+.md-h2 {
+  font-size: 1.14em;
+}
+
+.md-h3,
+.md-h4,
+.md-h5,
+.md-h6 {
+  font-size: 1.06em;
+}
+
+.md-list {
+  margin: 0.4em 0;
+  padding-left: 1.35em;
+}
+
+.md-list li {
+  margin: 0.18em 0;
+}
+
+.md-quote {
+  margin: 0.45em 0;
+  padding: 0.15em 0 0.15em 0.7em;
+  border-left: 2px solid var(--violet);
+  color: var(--text-muted);
+}
+
+.md-hr {
+  margin: 0.7em 0;
+  border: none;
+  border-top: 1px solid var(--border);
+}
+
+.md-code {
+  margin: 0.5em 0;
+  padding: 0.6em 0.75em;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.35);
+  border: 1px solid var(--border);
+  overflow-x: auto;
+}
+
+.md-code code {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px;
+  line-height: 1.5;
+  white-space: pre;
+}
+
+.md code {
+  padding: 0.1em 0.35em;
+  border-radius: 5px;
+  background: rgba(0, 0, 0, 0.3);
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12.5px;
+}
+
+.md-table {
+  margin: 0.5em 0;
+  border-collapse: collapse;
+  font-size: 0.94em;
+}
+
+.md-table th,
+.md-table td {
+  padding: 0.3em 0.6em;
+  border: 1px solid var(--border);
+  text-align: left;
+}
+
+.md-table th {
+  background: rgba(34, 211, 238, 0.08);
+}
+
+.md a {
+  color: var(--cyan);
+}
+
+.md-streaming .md > *:last-child {
+  display: inline;
+}

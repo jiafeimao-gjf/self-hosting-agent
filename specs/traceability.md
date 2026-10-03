@@ -131,6 +131,12 @@
 | **MAIL-006** | specs/005-taskboard-mailbox.md | 投递边界不是 `'step_boundary'` 返回 `BAD_BOUNDARY`，且不消费任何消息。 | `test/mailbox.test.ts` · 投递边界不是 step_boundary 报 BAD_BOUNDARY，且不消费 |
 | **MAIL-007** | specs/005-taskboard-mailbox.md | 持久化：`send` 后重新打开同一路径，未投递消息仍在；`drainAt` 后重新打开，已消费消息不会被二次投递。 | `test/mailbox.test.ts` · 持久化：重启后未投递消息仍在，已消费不重复投递 |
 | **MAIL-008** | specs/005-taskboard-mailbox.md | 投递给不存在/空闲 Agent 的消息不丢，等它下次 `drainAt` 取到；`senderKind` 解析发送者前缀，`toPeerFrame`/`fromPeerFrame` 与 `peer.message` 帧互转。 | `test/mailbox.test.ts` · 空闲/不存在 Agent 的消息不丢；发送者前缀与 peer.message 帧互转 |
+| **MD-001** | specs/024-markdown.md | 基础语法：标题 / 粗体 / 斜体 / 删除线 / 行内代码 / 围栏代码块 / 无序与有序列表 / 引用 / 分隔线都能正确产出；渲染是纯函数（同输入同输出），空输入产出空串。 | `test/markdown.test.ts` · 基础语法：标题 / 粗斜 / 行内代码 / 代码块 / 列表 / 引用 / 分隔线 |
+| **MD-002** | specs/024-markdown.md | 安全：源文本里的 HTML **一律转义**（不产出 `script`/`img` 等标签），代码块内容同样转义但原样保留；链接走协议白名单，`javascript:` / `data:` / `vbscript:` 被拒并降级成纯文本；安全链接带 `target="_blank" rel="noopener noreferrer"`。 | `test/markdown.test.ts` · 安全：源文本里的 HTML 一律转义，链接走协议白名单 |
+| **MD-003** | specs/024-markdown.md | 行内代码与代码块里的 Markdown **不被二次解析**（`` `**不是加粗**` `` 保持字面量；围栏里的 `#` 不是标题）。 | `test/markdown.test.ts` · 表格与行内代码里的标记不被二次解析 |
+| **MD-004** | specs/024-markdown.md | 归因：只有 Agent 输出（`agent` / `thinking`）走 Markdown；人类与系统消息保持纯文本；流式气泡与正式消息共用同一个渲染器。 | `test/markdown.test.ts` · 人类与系统消息不渲染 Markdown，只有 Agent 输出才渲染 |
+| **MD-005** | specs/024-markdown.md | `looksLikeMarkdown()` 只认真的标记，普通句子（含「两点半再说」这类数字开头）不误判。 | `test/markdown.test.ts` · looksLikeMarkdown 只认真的标记，普通句子不误判 |
+| **MD-006** | specs/024-markdown.md | 流式渲染：未闭合的 `**` 按字面显示（不产出残缺的 `<strong>`），闭合后才变成标记；未闭合的围栏也要保留内容。 | `test/markdown.test.ts` · 流式渲染：未闭合的语法按字面显示，闭合后变成标记（同一个渲染器） |
 | **MODEL-001** | specs/009-http-model.md | `createHttpModel` 返回可用的 `ModelPort`：请求发往 `{baseUrl}/chat/completions`，带 `Authorization: Bearer <apiKey>`、JSON 内容类型与 `model` 字段，默认使用全局 `fetch`。 | `test/http-model.test.ts` · createHttpModel 用全局 fetch 把请求发到 {baseUrl}/chat/completions，带鉴权头与 model |
 | **MODEL-002** | specs/009-http-model.md | `ContextItem[]` 的角色映射：`system`/`human`/`assistant` 直译，`human` → `user`，`peer` → `user` 且前缀标注来源（取自 `meta.from`，缺失时用 `peer`）。 | `test/http-model.test.ts` · 上下文角色映射：system/human/assistant 直译，peer 转 user 并前缀标注来源 |
 | **MODEL-003** | specs/009-http-model.md | `role: 'tool'` 的上下文映射为 `{ role: 'tool', content, tool_call_id }`，`tool_call_id` 取自 `meta.id`，缺失时不带该字段。 | `test/http-model.test.ts` · role:tool 的上下文映射为 tool 消息并带上 meta.id 作为 tool_call_id |
@@ -274,7 +280,7 @@
 
 ## 统计
 
-- 验收标准：**267** 条
-- 已覆盖：**267** 条
+- 验收标准：**273** 条
+- 已覆盖：**273** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

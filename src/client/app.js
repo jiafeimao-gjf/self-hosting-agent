@@ -42,6 +42,7 @@ import {
   withConversation,
 } from './conversations.js';
 import { escapeHtml, renderViewSpec } from './renderer.js';
+import { looksLikeMarkdown, renderMarkdown } from './markdown.js';
 import { createSettingsPage, currentModelText } from './settings.js';
 
 /** 连接状态 → 中文文案 */
@@ -157,7 +158,18 @@ export function renderMessage(message) {
     done: '本轮结束',
   };
   const label = labels[kind] ?? (agent || 'agent');
-  return `<li class="msg msg-${escapeHtml(kind)}"><span class="meta">${escapeHtml(label)}</span>${escapeHtml(textOf(item.text))}</li>`;
+  const raw = textOf(item.text);
+
+  // SPEC-024：**Agent 的输出**按 Markdown 渲染（它说的就是 Markdown）。
+  // 人类输入与系统消息保持纯文本：人类在输入框里敲的是随手记，不是文档；
+  // 而且「谁的内容被当成标记解析」这件事本身就是个需要明确划出来的边界。
+  const isAgentOutput = kind === 'agent' || kind === 'thinking';
+  const body =
+    isAgentOutput && looksLikeMarkdown(raw)
+      ? `<span class="md">${renderMarkdown(raw)}</span>`
+      : escapeHtml(raw);
+
+  return `<li class="msg msg-${escapeHtml(kind)}"><span class="meta">${escapeHtml(label)}</span>${body}</li>`;
 }
 
 /**
@@ -167,11 +179,13 @@ export function renderMessage(message) {
 export function renderStreamingBubble(message) {
   const item = isRecord(message) ? message : {};
   const agent = textOf(item.agent) || 'agent';
-  return (
-    `<span class="meta">${escapeHtml(agent)} · 正在写</span>` +
-    `<span class="msg-text">${escapeHtml(textOf(item.text))}</span>` +
-    '<span class="stream-caret" aria-hidden="true"></span>'
-  );
+  const raw = textOf(item.text);
+  // 与正式消息用**同一个**渲染器：不然写完的一瞬间排版会跳变
+  const body =
+    looksLikeMarkdown(raw)
+      ? `<span class="msg-text md">${renderMarkdown(raw)}</span>`
+      : `<span class="msg-text">${escapeHtml(raw)}</span>`;
+  return `<span class="meta">${escapeHtml(agent)} · 正在写</span>${body}<span class="stream-caret" aria-hidden="true"></span>`;
 }
 
 function formatTime(ts) {
