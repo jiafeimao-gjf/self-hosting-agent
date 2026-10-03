@@ -23,6 +23,8 @@ export interface BrowserRenderInput {
   html: string;
   title?: string;
   allowNetwork?: boolean;
+  /** 这份文档是从哪个文件来的（渲染 HTML 文件时记下，界面上显示"正在看哪个文件"） */
+  path?: string;
 }
 
 /** 发给客户端 / 存进状态的那一份（html 是已组合好的完整文档） */
@@ -32,6 +34,8 @@ export interface BrowserDocument {
   html: string;
   allowNetwork: boolean;
   ts: string;
+  /** 来源文件（相对工作空间的路径）；直接给 HTML 时没有这个字段 */
+  path?: string;
 }
 
 export interface BrowserEvent {
@@ -97,13 +101,15 @@ export class BrowserHost {
     const allowNetwork = input.allowNetwork === true;
 
     this.#version += 1;
-    this.#raw = { html: input.html, title, allowNetwork };
+    const fromPath = typeof input.path === 'string' && input.path.trim() !== '' ? input.path.trim() : undefined;
+    this.#raw = { html: input.html, title, allowNetwork, ...(fromPath === undefined ? {} : { path: fromPath }) };
     this.#doc = {
       version: this.#version,
       title,
       html: composeDocument({ html: input.html, title, allowNetwork }),
       allowNetwork,
       ts: this.#now().toISOString(),
+      ...(fromPath === undefined ? {} : { path: fromPath }),
     };
     return { ok: true, version: this.#version, title };
   }

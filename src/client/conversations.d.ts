@@ -183,6 +183,9 @@ export declare function formatBytes(bytes: unknown): string;
 export declare function formatMtime(raw: unknown): string;
 
 /** 文件列表一行 HTML（只有元信息，path 转义） */
+/** SPEC-019：浏览器面板只渲染 .html / .htm */
+export declare function isHtmlPath(path: unknown): boolean;
+
 export declare function renderFileRow(raw: unknown): string;
 
 /** 文件列表 HTML；空列表返回空串 */
@@ -258,12 +261,16 @@ export interface WorkspacePanelOptions {
   request: ConversationRequest;
   /** 加载失败的可见文案（app.js 据此进时间线） */
   onError?: (message: string) => void;
+  /** SPEC-019：文件在浏览器面板渲染成功后的通知（app.js 据此切到浏览器页签） */
+  onOpenedInBrowser?: (path: string) => void;
 }
 
 /** 工作空间「文件」面板控制器 */
 export interface WorkspacePanel {
   /** 重新加载文件列表（只请求 `/api/workspace`）；失败返回 null 并给出可见文案 */
   reload(conversationId?: unknown): Promise<{ root: string; files: WorkspaceFileEntry[] } | null>;
+  /** SPEC-019：把 HTML 文件送进浏览器面板；失败返回 false 并给出可见文案 */
+  openInBrowser(path: unknown): Promise<boolean>;
   /** 点击文件：这时才请求内容，并用 textContent 展示；失败返回 null */
   openFile(path: unknown): Promise<{
     path: string;

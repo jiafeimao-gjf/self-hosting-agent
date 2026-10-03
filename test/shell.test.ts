@@ -101,16 +101,23 @@ test('执行结果形状稳定：退出码原样透传，非 0 不算异常', as
 test('超时后进程组里的后台进程确实死了', async () => {
   const cwd = tempDir('tree2');
   const runner = createShellRunner();
-  const result = await runner.run({
+  // 先把 pid 写出来再睡觉：超时窗口短，写文件不能和杀进程抢时间
+  const running = runner.run({
     command: 'sleep 30 & echo $! > bg.pid; sleep 30',
     cwd,
-    timeoutMs: 800,
+    timeoutMs: 2500,
   });
-  assert.equal(result.timedOut, true);
-  await sleep(200);
 
-  const pidText = fs.readFileSync(path.join(cwd, 'bg.pid'), 'utf8').trim();
-  const pid = Number(pidText);
+  // 等 pid 落盘（最多 2 秒），确保我们验的是「跑起来过、然后被回收」
+  const deadline = Date.now() + 2000;
+  while (Date.now() < deadline && !fs.existsSync(path.join(cwd, 'bg.pid'))) await sleep(20);
+  assert.equal(fs.existsSync(path.join(cwd, 'bg.pid')), true, '后台进程应当已经启动');
+
+  const result = await running;
+  assert.equal(result.timedOut, true);
+  await sleep(300);
+
+  const pid = Number(fs.readFileSync(path.join(cwd, 'bg.pid'), 'utf8').trim());
   assert.ok(Number.isFinite(pid) && pid > 0, '后台进程 pid 应被写下来');
   let alive = true;
   try {
@@ -119,6 +126,7 @@ test('超时后进程组里的后台进程确实死了', async () => {
     alive = false;
   }
   assert.equal(alive, false, `后台 sleep(${pid}) 必须随进程组一起被回收`);
+  assert.ok(result.durationMs < 8000, `不该等满 30 秒，实际 ${result.durationMs}ms`);
 });
 
 // @spec SHELL-005

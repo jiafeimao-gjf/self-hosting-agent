@@ -285,11 +285,47 @@ export function createBrowserPanel(options) {
   /** 首帧期间收到的 html，等 load 后补画 */
   let pendingHtml = null;
 
+  /**
+   * 强制 iframe 重绘一帧。
+   *
+   * 真机上踩到的现象：`srcdoc` 赋值之后，iframe 明明**加载过了**（load 触发、属性正确、
+   * 内容也没问题），画面却一直是空的——直到有别的重排把它顶出来。实测：
+   *   · 只读一次 `offsetHeight` → 没用；
+   *   · 把同一份 srcdoc 再赋一次 → 同值赋值是 no-op，也没用；
+   *   · **让它消失一帧再回来** → 立刻画出来。
+   * 跨域沙箱读不到里面，没法"确认画上了"，所以这里用这个朴素但可靠的办法。
+   * 代价是打开文档时有一帧的空档（肉眼基本看不见），换来的是不会白屏。
+   */
+  function nudgePaint() {
+    // 纯视觉补救：拿不到 style（假 DOM / 老浏览器）就静默跳过，别让它把主流程搞挂
+    const style = iframe === null ? undefined : iframe.style;
+    if (style === undefined || style === null) return;
+    style.display = 'none';
+    void iframe.offsetHeight;
+    const restore = () => {
+      if (iframe !== null && iframe.style !== undefined && iframe.style !== null) iframe.style.display = '';
+    };
+    if (typeof requestAnimationFrame === 'function') requestAnimationFrame(restore);
+    else setTimeout(restore, 16);
+  }
+
+  /** 写完等着顶一帧：必须等它**加载完**再顶，导航还没起来就藏起来会把这次导航撤掉 */
+  let nudgePending = false;
+
   function write(htmlText) {
     if (iframe === null) return;
     iframe.srcdoc = htmlText;
+    nudgePending = true;
+    // 万一 load 一直不来，也给一次兜底
+    setTimeout(() => {
+      if (nudgePending) {
+        nudgePending = false;
+        nudgePaint();
+      }
+    }, 400);
   }
 
+  /** 把首帧期间攒下的文档补画上（沙箱 settled 之后才写） */
   function flushPendingBrowser() {
     if (pendingHtml === null) return;
     const next = pendingHtml;
@@ -303,6 +339,11 @@ export function createBrowserPanel(options) {
     iframe.addEventListener('load', () => {
       loaded = true;
       flushPendingBrowser();
+      // 加载完成了：这时候顶一帧才能真正把画面顶出来（早于加载会被撤掉）
+      if (nudgePending) {
+        nudgePending = false;
+        nudgePaint();
+      }
     });
   }
 
@@ -385,7 +426,19 @@ export function createBrowserPanel(options) {
     return true;
   }
 
+  /**
+   * 把当前文档重新写一遍。切到浏览器页签时调用：隐藏期间写进去的文档
+   * 可能一直没加载，显示出来时补一次。
+   */
+  function repaint() {
+    if (html.length === 0 || iframe === null) return false;
+    write(html);
+    painted = true;
+    return true;
+  }
+
   return {
+    repaint,
     applyDocument,
     applyState,
     handleMessage,

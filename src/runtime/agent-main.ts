@@ -178,11 +178,6 @@ const HOST_TOOL_DESCRIPTIONS: Record<string, string> = {
     'text{text} | progress{label, value:0~1, tone?} | action{label, emit} | list{items:["..."]} | ' +
     'kv{pairs:[{key, value}]} | columns{children:[...]} | badge{text, tone?} | panel{title?, children}。' +
     'tone 可选：default|muted|strong|info|success|warning|danger。一屏放一件事，不要把长文塞进界面。',
-  'browser.render':
-    '把一份完整的 HTML 文档渲染进**内置浏览器面板**（独立于界面面板，会立刻显示）。' +
-    '参数：html（必填，完整文档或片段都行）、title?、allowNetwork?（默认 false，禁止外链网络）。' +
-    '文档里的交互可以回流：给元素加 data-ac-emit="事件名"，人类点击后你会收到一条「浏览器交互」消息；' +
-    '文档内也能调 window.AgentClient.emit(name, payload) 主动上报。适合图表、表单、小工具这类界面文档表达不了的东西。',
   'shell.run':
     '执行一条 shell 命令（bash -lc，cwd 是当前对话的工作空间）。**每一次调用都会请求人类批准**，' +
     '人类会看到完整命令原文并决定批不批；被拒绝就什么都不会执行。' +
@@ -212,8 +207,9 @@ const SYSTEM_PROMPT = [
   '工作方式：',
   '1. 先弄清人类要什么。不确定就直接问，不要编造数据。',
   '2. 需要在界面上展示结果时，调用 ui.render 把界面画出来——人类会立刻看到，不需要刷新。',
-  '2b. 需要图表、表单、可点击的小工具这类「一份完整 HTML 才表达得清」的东西，用 browser.render 画进内置浏览器面板；' +
-    '人类在里面点了带 data-ac-emit 的元素，你会收到一条「浏览器交互」消息。',
+  '2b. 需要图表、表单、可点击的小工具这类「一份完整 HTML 才表达得清」的东西，就把它写成工作空间里的 .html 文件' +
+    '（workspace.write，例如 report.html）——人类在「文件」里点一下就能在内置浏览器面板里看到它，' +
+    '文档里带 data-ac-emit 的元素被点击时你会收到一条「浏览器交互」消息。',
   '3. 回复用中文、短句、说结论。长内容放进界面里，而不是堆在对话里。',
   '4. 只有确实需要并行干活时，才用 agent.spawn 拉起队友（这会请求人类审批）。',
   '4b. 要留下东西（报告、数据、配置）就写进工作空间（workspace.write）——那是真的落盘，人类也能在「文件」里看到。',
@@ -246,15 +242,6 @@ const HOST_TOOL_SCHEMAS: Record<string, Record<string, unknown>> = {
     type: 'object',
     properties: { ids: { type: 'array', items: { type: 'string' } }, timeoutMs: { type: 'number' } },
     required: ['ids'],
-  },
-  'browser.render': {
-    type: 'object',
-    properties: {
-      html: { type: 'string', description: 'HTML 文档（完整或片段）' },
-      title: { type: 'string', description: '面板上显示的标题' },
-      allowNetwork: { type: 'boolean', description: '是否允许加载外部资源，默认 false' },
-    },
-    required: ['html'],
   },
   'shell.run': {
     type: 'object',

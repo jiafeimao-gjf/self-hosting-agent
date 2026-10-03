@@ -397,11 +397,22 @@ export function formatMtime(raw) {
  * 文件列表的一行：**只有元信息**，`path` 是不可信输入必须转义。
  * `content` 永远不会出现在这里（它在点击时单独加载）。
  */
+/** SPEC-019：浏览器面板只渲染 HTML 文件，列表里给这类文件一个可点的入口 */
+export function isHtmlPath(path) {
+  const clean = str(path).split('#')[0].split('?')[0].trim().toLowerCase();
+  return clean.endsWith('.html') || clean.endsWith('.htm');
+}
+
 export function renderFileRow(raw) {
   const file = normalizeWorkspaceFileEntry(raw);
   const path = file.path.length > 0 ? file.path : '(未知文件)';
+  const open =
+    isHtmlPath(path)
+      ? `<span class="file-action" data-browse-path="${escapeHtml(path)}" title="在内置浏览器里渲染" role="button" tabindex="0">在浏览器打开</span>`
+      : '';
   return `<button type="button" class="file-row" data-file-path="${escapeHtml(path)}" title="${escapeHtml(path)}">` +
     `<span class="file-path">${escapeHtml(path)}</span>` +
+    open +
     `<span class="file-bytes">${escapeHtml(formatBytes(file.bytes))}</span>` +
     `<span class="file-mtime">${escapeHtml(formatMtime(file.mtime))}</span>` +
     '</button>';
@@ -722,6 +733,27 @@ export function createWorkspacePanel(options) {
   }
 
   /** 点击一个文件：**这时才**请求内容，并用 textContent 展示 */
+  /**
+   * SPEC-019：把工作空间里的 HTML 文件送进浏览器面板。
+   *
+   * 浏览器面板**没有**"Agent 直接塞 HTML"的入口了 —— 想让人看到什么，就写成文件，
+   * 再由人决定打开哪个（这里 / 文件行上的「在浏览器打开」/ `/browse` 命令）。
+   */
+  async function openInBrowser(path) {
+    const target = str(path);
+    if (target.length === 0) return false;
+    if (request === null) return false;
+    const response = await request('/api/browser/open', { method: 'POST', body: { path: target } });
+    if (response === null || response.ok !== true) {
+      const data = isRecord(response?.data) ? response.data : {};
+      setStatus(`在浏览器打开失败：${serverErrorText(data, response?.status ?? 0)}`, 'fail');
+      return false;
+    }
+    setStatus(`已在浏览器面板渲染 ${target}`, 'ok');
+    if (typeof config.onOpenedInBrowser === 'function') config.onOpenedInBrowser(target);
+    return true;
+  }
+
   async function openFile(path) {
     const target = str(path);
     if (target.length === 0) return null;
@@ -765,6 +797,7 @@ export function createWorkspacePanel(options) {
 
   return {
     reload,
+    openInBrowser,
     openFile,
     clear,
     getConversation: () => current,

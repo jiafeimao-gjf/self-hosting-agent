@@ -213,6 +213,17 @@ export function createRequestHandler(options: ServeOptions): http.RequestListene
       return;
     }
 
+    if (route === '/api/browser/open' && method === 'POST') {
+      // SPEC-019：浏览器面板的入口 = 打开工作空间里的 HTML 文件
+      readBody(req)
+        .then((body) => {
+          const outcome = session.openInBrowser(body.path);
+          sendJson(res, outcome.ok ? 200 : 400, outcome.ok ? { ok: true, version: outcome.version, path: outcome.path } : { ok: false, error: outcome.error });
+        })
+        .catch((err: Error) => sendJson(res, 400, { ok: false, error: err.message }));
+      return;
+    }
+
     if (route === '/api/workspace/file' && method === 'GET') {
       const target = url.searchParams.get('path') ?? '';
       const read = session.runner.workspace.read({ path: target });

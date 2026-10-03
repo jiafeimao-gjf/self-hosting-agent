@@ -51,7 +51,13 @@ export interface TeamRunnerOptions {
   /** 诊断日志：子进程 stderr、进程起停都记它 */
   logger?: Logger;
   /** 浏览器文档更新时通知宿主（浏览器面板据此重画） */
-  onBrowserChanged?: (doc: { version: number; title: string; html: string; allowNetwork: boolean }) => void;
+  onBrowserChanged?: (doc: {
+    version: number;
+    title: string;
+    html: string;
+    allowNetwork: boolean;
+    path?: string;
+  }) => void;
   /** 可注入的浏览器宿主（测试与恢复现场用） */
   browser?: BrowserHost;
   /** 可注入的工作空间（默认 <dir>/workspace） */

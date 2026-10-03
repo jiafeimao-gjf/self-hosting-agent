@@ -45,6 +45,7 @@ export const COMMANDS: CommandSpec[] = [
   { name: 'switch', usage: '/switch <id>', summary: '切换到指定对话' },
   { name: 'files', usage: '/files', summary: '列出当前工作空间的文件' },
   { name: 'cat', usage: '/cat <路径>', summary: '读取并展示工作空间里的文件' },
+  { name: 'browse', usage: '/browse <路径.html>', summary: '在浏览器面板里渲染一个 HTML 文件' },
   { name: 'whoami', usage: '/whoami', summary: '显示当前对话与模型' },
 ];
 
@@ -183,6 +184,17 @@ export function runCommand(text: string, context: CommandContext): CommandResult
       if (!read.ok) return { ok: false, command: 'cat', output: '', error: `${read.code}: ${read.reason}` };
       const tail = read.truncated ? '\n…（已截断，文件更大）' : '';
       return { ok: true, command: 'cat', output: `### ${read.path}（${bytesLabel(read.bytes)}）\n\n${read.content}${tail}` };
+    }
+
+    case 'browse': {
+      if (args === '') return { ok: false, command: 'browse', output: '', error: '用法：/browse <路径.html>（用 /files 看有哪些）' };
+      const opened = session.openInBrowser(args);
+      if (!opened.ok) return { ok: false, command: 'browse', output: '', error: String(opened.error) };
+      return {
+        ok: true,
+        command: 'browse',
+        output: `已在浏览器面板渲染 ${opened.path}（版本 v${String(opened.version)}）。`,
+      };
     }
 
     case 'whoami': {

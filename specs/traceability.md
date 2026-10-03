@@ -30,11 +30,13 @@
 | **BROWSER-005** | specs/019-browser.md | 桥入口校验：非对象 / `__ac` 缺失 / kind 不在白名单 / emit 缺 name / 超限，逐条拒绝并给出错误码。 | `test/browser.test.ts` · 事件入口硬校验：kind 白名单 / name / 超限，逐条拒绝<br>`test/browser.test.ts` · 窗口消息形态多一层信封校验：缺 __ac / channel 不对一律拒绝 |
 | **BROWSER-006** | specs/019-browser.md | 声明式交互：桥脚本监听 click 与 submit，读取 `data-ac-emit` 与 `data-ac-payload` 后上报。 | `test/browser.test.ts` · 声明式交互：桥监听 click 与 submit，读取 data-ac-emit / data-ac-payload<br>`test/client-browser-ui.test.ts` · 声明式交互：桥上报的 emit（data-ac-emit / data-ac-payload）原样转成 POST /api/browser/event |
 | **BROWSER-007** | specs/019-browser.md | 命令式交互与日志：桥暴露 `AgentClient.emit/log`，并转发 `console.log`、`window.onerror`、`unhandledrejection`。 | `test/browser.test.ts` · 命令式交互与日志：AgentClient.emit/log 与 console/error 转发<br>`test/client-browser-ui.test.ts` · 命令式与日志转发：emit / log / error 三类消息都转成 POST，进 DOM 的文本全部转义<br>`test/client-browser-ui.test.ts` · 面板控制器接上假 DOM：只有本 iframe 的消息才变成 POST，来源不对完全静默 |
-| **BROWSER-008** | specs/019-browser.md | 宿主工具 `browser.render`：成功返回版本号；参数非法返回 `INVALID_ARGS`。 | `test/browser.test.ts` · 宿主工具 browser.render：成功返回版本号，参数非法返回 INVALID_ARGS |
+| **BROWSER-008** | specs/019-browser.md | 浏览器面板的入口是 `POST /api/browser/open {path}`：渲染工作空间里的 `.html`/`.htm`； | `test/browser.test.ts` · 浏览器面板的入口是「打开 HTML 文件」：非 HTML / 不存在 / 越界都被拒 |
 | **BROWSER-009** | specs/019-browser.md | 人类交互送达 Agent：`POST /api/browser/event` 校验后写进事件日志（`browser.event`），并以 `browser.event` 帧投递给 Lead；非法事件返回 400 且不落日志。 | `test/browser.test.ts` · 人类交互回流：合法事件落日志并投给 Lead，非法事件 400 且不落日志 |
 | **BROWSER-010** | specs/019-browser.md | 子进程收到 `browser.event` 帧后，把它作为一条**人类来源的消息**注入本轮上下文（Agent 能据此行动）。 | `test/browser.test.ts` · 子进程收到 browser.event 帧后，把它作为人类来源的消息注入本轮上下文 |
 | **BROWSER-011** | specs/019-browser.md | 客户端浏览器面板独立于界面面板：沙箱属性只含 `allow-scripts`；消息必须来自该 iframe 的 window；面板显示文档标题与版本。 | `test/client-browser-ui.test.ts` · 浏览器面板是独立的第二个沙箱：只开 allow-scripts，与界面面板并存，已有 id 不变<br>`test/client-browser-ui.test.ts` · 桥消息只认本 iframe 的 window + __ac 标记 + 通道 + kind 白名单，其余一律丢弃<br>`test/client-browser-ui.test.ts` · 面板显示文档标题与版本；没有文档时是空态，坏输入不报错<br>`test/client-browser-ui.test.ts` · 首帧与空态：没画上就要再画，没有文档就清空沙箱而不是沿用旧内容<br>`test/client-browser-ui.test.ts` · 面板控制器接上假 DOM：只有本 iframe 的消息才变成 POST，来源不对完全静默 |
-| **BROWSER-012** | specs/019-browser.md | 端到端：脚本模型渲染 HTML → 人类点击 → 事件回传 → Agent 收到并回应下一轮。 | `test/browser.test.ts` · 端到端：脚本模型渲染 HTML → 人类点击 → Agent 收到并回下一轮 |
+| **BROWSER-012** | specs/019-browser.md | 端到端：脚本模型渲染 HTML → 人类点击 → 事件回传 → Agent 收到并回应下一轮。 | `test/browser.test.ts` · 端到端：Agent 写 HTML 文件 → 人打开渲染 → 点击回流给 Agent |
+| **BROWSER-013** | specs/019-browser.md | **Agent 手里没有"往界面塞 HTML"的工具**：`browser.render` 已从工具表与子进程自述里移除， | `test/browser.test.ts` · Agent 不再有「往界面塞 HTML」的工具：browser.render 已移除 |
+| **BROWSER-014** | specs/019-browser.md | 写进沙箱的文档必须**真的画出来**：`srcdoc` 赋值后 iframe 有时加载了却不重绘 | `test/client-browser-ui.test.ts` · 写进沙箱的文档必须真的画出来：加载完成后强制重绘一帧 |
 | **CLI-001** | specs/011-client.md | `GET /api/state` 返回界面文档、进程表、任务板、消息与事件尾部，字段齐全且可 JSON 解析。 | `test/server.test.ts` · GET /api/state 返回界面文档、进程表、任务板、消息与事件尾部 |
 | **CLI-002** | specs/011-client.md | `GET /api/stream` 建立 SSE 连接后，先收到一次 `state` 快照。 | `test/server.test.ts` · SSE 建立连接后先收到一次 state 快照 |
 | **CLI-003** | specs/011-client.md | `POST /api/message` 把人类输入交给 Lead，Agent 的帧通过 SSE 以 `frame` 事件实时推给客户端。 | `test/server.test.ts` · POST /api/message 把人类输入交给 Lead，帧通过 SSE 实时推流 |
@@ -271,7 +273,7 @@
 
 ## 统计
 
-- 验收标准：**264** 条
-- 已覆盖：**264** 条
+- 验收标准：**266** 条
+- 已覆盖：**266** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

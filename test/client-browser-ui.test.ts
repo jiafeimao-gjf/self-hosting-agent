@@ -364,3 +364,56 @@ test('面板控制器接上假 DOM：只有本 iframe 的消息才变成 POST，
   assert.equal(panel.isPainted(), false);
 });
 
+
+// @spec BROWSER-014
+test('写进沙箱的文档必须真的画出来：加载完成后强制重绘一帧', async () => {
+  // 真机踩到的现象：srcdoc 赋对了、load 也触发了，画面却一直是空的，
+  // 直到有别的重排把它顶出来。修法是「加载完成后再让它消失一帧」——
+  // 注意必须在 load 之后：导航还没起来就藏起来会把这次导航撤掉（第一版就是这么错的）。
+  const transitions: string[] = [];
+  const listeners: Record<string, Array<() => void>> = {};
+  let srcdoc = '';
+
+  const iframe = {
+    style: {
+      get display() {
+        return transitions[transitions.length - 1] === 'hidden' ? 'none' : '';
+      },
+      set display(value: string) {
+        transitions.push(value === 'none' ? 'hidden' : 'shown');
+      },
+    },
+    get offsetHeight() {
+      return 100;
+    },
+    get srcdoc() {
+      return srcdoc;
+    },
+    set srcdoc(value: string) {
+      srcdoc = value;
+    },
+    addEventListener(name: string, handler: () => void) {
+      (listeners[name] ??= []).push(handler);
+    },
+  };
+
+  const panel = createBrowserPanel({
+    nodes: { iframe, title: null, version: null, empty: null, list: null, status: null },
+    request: async () => ({ ok: true, status: 200, data: {} }),
+  });
+
+  // 先让沙箱跑完它自己的首次加载（loaded = true），否则文档只会进待画队列
+  for (const handler of listeners.load ?? []) handler();
+
+  const painted = panel.applyDocument({ version: 1, title: 'a.html', html: '<p>hi</p>' }, { force: true });
+  assert.equal(painted, true, '有文档就该写进去');
+  assert.match(srcdoc, /<p>hi<\/p>/);
+  assert.equal(transitions.length, 0, '导航还没跑起来之前不许藏 —— 那会把这次导航撤掉');
+
+  // 加载完成
+  for (const handler of listeners.load ?? []) handler();
+  await new Promise((resolve) => setTimeout(resolve, 30));
+
+  assert.deepEqual(transitions, ['hidden', 'shown'], '加载完成后必须消失一帧再回来，把画面顶出来');
+  assert.match(srcdoc, /<p>hi<\/p>/, '顶一帧不该改内容');
+});

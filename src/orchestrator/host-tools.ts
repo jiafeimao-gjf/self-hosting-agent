@@ -22,7 +22,6 @@ export const HOST_TOOL_NAMES = [
   'agent.send',
   'agent.wait',
   'ui.render',
-  'browser.render',
   'workspace.write',
   'workspace.read',
   'workspace.list',
@@ -81,8 +80,14 @@ export interface HostRuntime {
   /** P3：客户端源码管理器；没接上时 client.* 工具明确报错，而不是假装成功 */
   clientSource?: ClientSource;
   onClientChanged?: (payload: ClientChangedPayload) => void;
-  /** 浏览器文档更新：宿主据此推给客户端（SPEC-019） */
-  onBrowserChanged?: (doc: { version: number; title: string; html: string; allowNetwork: boolean }) => void;
+  /** 浏览器文档更新：宿主据此推给客户端（SPEC-019；入口是"打开 HTML 文件"） */
+  onBrowserChanged?: (doc: {
+    version: number;
+    title: string;
+    html: string;
+    allowNetwork: boolean;
+    path?: string;
+  }) => void;
 }
 
 export interface HostToolResult {
@@ -200,32 +205,6 @@ export function createHostTools(options: { shell?: boolean } = {}): HostTool[] {
         const result = runtime.ingest.ingest({ scope, op, spec: args.spec });
         if (!result.ok) return fail(`${result.code}: ${result.reason}`);
         return done({ version: result.version, scope: result.scope });
-      },
-    },
-    {
-      name: 'browser.render',
-      description: '把一个完整的 HTML 文档渲染进内置浏览器面板（独立于界面文档），返回版本号',
-      async run(args, runtime) {
-        const html = asString(args.html);
-        if (html === '') return fail('INVALID_ARGS: browser.render 需要 html');
-
-        const result = runtime.browser.render({
-          html,
-          ...(typeof args.title === 'string' ? { title: args.title } : {}),
-          ...(args.allowNetwork === true ? { allowNetwork: true } : {}),
-        });
-        if (!result.ok) return fail(`${result.code}: ${result.reason}`);
-
-        const doc = runtime.browser.current();
-        if (doc !== undefined) {
-          runtime.onBrowserChanged?.({
-            version: doc.version,
-            title: doc.title,
-            html: doc.html,
-            allowNetwork: doc.allowNetwork,
-          });
-        }
-        return done({ version: result.version, title: result.title });
       },
     },
     {

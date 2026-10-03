@@ -8,6 +8,7 @@ import { BrowserHost, MAX_EVENT_BYTES, MAX_HTML_BYTES } from '../src/browser/doc
 import { BOOTSTRAP_SCRIPT, BRIDGE_CHANNEL, OFFLINE_CSP, composeDocument } from '../src/browser/bootstrap.ts';
 import { createHostTools } from '../src/orchestrator/host-tools.ts';
 import type { HostTool, HostRuntime } from '../src/orchestrator/host-tools.ts';
+import { ConversationRegistry } from '../src/server/conversations.ts';
 import { ViewDocument } from '../src/surface/document.ts';
 import { SurfaceIngest } from '../src/surface/ingest.ts';
 import { TaskBoard } from '../src/taskboard/board.ts';
@@ -200,31 +201,68 @@ test('命令式交互与日志：AgentClient.emit/log 与 console/error 转发',
 });
 
 // @spec BROWSER-008
-test('宿主工具 browser.render：成功返回版本号，参数非法返回 INVALID_ARGS', async () => {
-  const tools = createHostTools();
-  const tool = tools.find((candidate) => candidate.name === 'browser.render');
-  assert.ok(tool, 'browser.render 必须注册为宿主工具');
+test('浏览器面板的入口是「打开 HTML 文件」：非 HTML / 不存在 / 越界都被拒', async () => {
+  const root = tempDir('open');
+  const registry = new ConversationRegistry({
+    root,
+    open: (id, dir) => new ClientSession({ dir, id, lead: { script: [{ text: 'ok', done: true }] } }),
+  });
+  const session = registry.get('default');
+  session.runner.workspace.write({ path: 'report.html', content: '<h1>营收</h1>' });
+  session.runner.workspace.write({ path: 'notes.md', content: '# 笔记' });
 
+  const opened = session.openInBrowser('report.html');
+  assert.equal(opened.ok, true, `打开 HTML 应当成功：${opened.error ?? ''}`);
+  assert.equal(opened.path, 'report.html');
+
+  const doc = session.state().browser;
+  assert.ok(doc, '打开之后状态里必须有浏览器文档');
+  assert.equal(doc?.path, 'report.html', '要记下来源文件，界面上才显示得出"正在看哪个文件"');
+  assert.equal(doc?.title, 'report.html');
+  assert.match(String(doc?.html), /data-agent-client-bridge/, '发给客户端的必须是组合好的文档');
+
+  // 只渲染 HTML：别的文件不该进浏览器（它们是给人读的文本）
+  const notHtml = session.openInBrowser('notes.md');
+  assert.equal(notHtml.ok, false);
+  assert.match(String(notHtml.error), /NOT_HTML/);
+
+  const missing = session.openInBrowser('nope.html');
+  assert.equal(missing.ok, false);
+  assert.match(String(missing.error), /NOT_FOUND/);
+
+  const escape = session.openInBrowser('../../etc/passwd.html');
+  assert.equal(escape.ok, false);
+  assert.match(String(escape.error), /PATH_ESCAPE/);
+
+  const empty = session.openInBrowser('');
+  assert.equal(empty.ok, false);
+  assert.match(String(empty.error), /BAD_PATH/);
+
+  // 打开新文件会让版本号前进（同一个面板，换一份文档）
+  session.runner.workspace.write({ path: 'second.html', content: '<p>二</p>' });
+  const second = session.openInBrowser('second.html');
+  assert.equal(second.ok, true);
+  assert.equal(second.version, 2);
+  assert.equal(session.state().browser?.path, 'second.html');
+});
+
+// @spec BROWSER-013
+test('Agent 不再有「往界面塞 HTML」的工具：browser.render 已移除', () => {
+  const names = createHostTools().map((tool) => tool.name);
+  assert.equal(names.includes('browser.render'), false, 'browser.render 必须从工具表里消失');
+  assert.equal(
+    names.some((name) => name.startsWith('browser.')),
+    false,
+    '浏览器不该再有任何 Agent 可调的工具——入口只有"打开人指定的 HTML 文件"',
+  );
+  // 能力还在：渲染引擎、桥、沙箱一个都没少
   const browser = new BrowserHost();
-  const notified: Array<{ version: number; title: string }> = [];
-  const runtime = {
-    browser,
-    onBrowserChanged: (doc: { version: number; title: string }) => notified.push(doc),
-  } as unknown as HostRuntime;
+  assert.equal(browser.render({ html: '<p>hi</p>', title: 't' }).ok, true);
+  assert.match(String(browser.current()?.html), /data-agent-client-bridge/);
 
-  const ok = await (tool as HostTool).run({ html: '<p>hi</p>', title: '报表' }, runtime, 'lead');
-  assert.equal(ok.ok, true);
-  assert.deepEqual(JSON.parse(String(ok.ok === true ? ok.result : '')), { version: 1, title: '报表' });
-  assert.equal(notified.length, 1, '渲染成功必须通知宿主，否则客户端不会重画');
-  assert.equal(notified[0]?.version, 1);
-
-  const bad = await (tool as HostTool).run({}, runtime, 'lead');
-  assert.equal(bad.ok, false);
-  assert.match(String(bad.ok === false ? bad.error : ''), /INVALID_ARGS/);
-
-  const tooLarge = await (tool as HostTool).run({ html: 'x'.repeat(MAX_HTML_BYTES + 1) }, runtime, 'lead');
-  assert.equal(tooLarge.ok, false);
-  assert.match(String(tooLarge.ok === false ? tooLarge.error : ''), /HTML_TOO_LARGE/);
+  // 子进程也不该再声明这个工具
+  const source = fs.readFileSync(new URL('../src/runtime/agent-main.ts', import.meta.url), 'utf8');
+  assert.equal(source.includes('browser.render'), false, '子进程的工具自述里不许再有它');
 });
 
 // @spec BROWSER-009
@@ -283,22 +321,22 @@ test('人类交互回流：合法事件落日志并投给 Lead，非法事件 40
 });
 
 // @spec BROWSER-012
-test('端到端：脚本模型渲染 HTML → 人类点击 → Agent 收到并回下一轮', async () => {
+test('端到端：Agent 写 HTML 文件 → 人打开渲染 → 点击回流给 Agent', async () => {
   const session = new ClientSession({
     dir: tempDir('e2e'),
     lead: {
       script: [
-        // 第一轮：Agent 渲染一份带交互的 HTML
+        // 第一轮：Agent 把带交互的界面**写成文件**（不再是往面板里塞 HTML）
         {
           toolCalls: [
             {
               id: 'c1',
-              name: 'browser.render',
-              args: { html: '<button data-ac-emit="导出">导出</button>', title: '报表' },
+              name: 'workspace.write',
+              args: { path: 'board.html', content: '<button data-ac-emit="导出">导出</button>' },
             },
           ],
         },
-        { text: '已渲染，等你点', done: true },
+        { text: '已写成 board.html，你在文件里点一下就能看到', done: true },
         // 第二轮：收到人类点击后的回复
         { text: '你点了导出，这就去生成', done: true },
       ],
@@ -313,18 +351,27 @@ test('端到端：脚本模型渲染 HTML → 人类点击 → Agent 收到并�
       body: JSON.stringify({ text: '给我一个导出按钮' }),
     });
 
-    // 等文档真的落到宿主
+    // 等文件真的落盘
     const deadline = Date.now() + 20000;
-    while (Date.now() < deadline && session.state().browser === null) {
+    while (Date.now() < deadline && session.runner.workspace.list().length === 0) {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    assert.deepEqual(session.runner.workspace.list().map((file) => file.path), ['board.html']);
+
+    // 人在「文件」里点「在浏览器打开」→ 走 HTTP，与界面同一条路
+    const opened = await fetch(`${server.url}/api/browser/open`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ path: 'board.html' }),
+    });
+    assert.equal(opened.status, 200);
+
     const doc = session.state().browser;
-    assert.ok(doc, 'Agent 调 browser.render 之后，状态里必须有浏览器文档');
-    assert.equal(doc?.title, '报表');
+    assert.equal(doc?.path, 'board.html');
     assert.match(String(doc?.html), /data-ac-emit="导出"/);
     assert.match(String(doc?.html), /data-agent-client-bridge/, '发给客户端的一定是组合好的文档');
 
-    // 人类点击 → 回流 → Agent 下一轮据它回应
+    // 桥回流：人在页面里点了那个按钮
     const response = await fetch(`${server.url}/api/browser/event`, {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
@@ -340,7 +387,7 @@ test('端到端：脚本模型渲染 HTML → 人类点击 → Agent 收到并�
     assert.equal(
       session.state().messages.some((item) => item.body.includes('这就去生成')),
       true,
-      'Agent 必须基于人类的点击继续干活（而不是把这次交互当噪音丢掉）',
+      'Agent 必须基于人类的点击继续干活',
     );
   } finally {
     await server.close();

@@ -1600,3 +1600,18 @@ body {
   color: var(--text-muted);
   font-size: 12px;
 }
+
+/* SPEC-019：文件行里的「在浏览器打开」 */
+.file-action {
+  margin-left: 6px;
+  padding: 1px 7px;
+  border: 1px solid var(--cyan);
+  border-radius: 999px;
+  color: var(--cyan);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+.file-action:hover {
+  background: rgba(34, 211, 238, 0.14);
+}

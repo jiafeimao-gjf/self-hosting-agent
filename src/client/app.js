@@ -612,6 +612,20 @@ function boot() {
   if (dom.fileList !== null && dom.fileList !== undefined) {
     dom.fileList.addEventListener('click', (event) => {
       const target = event.target;
+      // 「在浏览器打开」优先：它嵌在文件行里面，先拦下来
+      const browse = target instanceof Element ? target.closest('[data-browse-path]') : null;
+      if (browse !== null) {
+        // 行本身也是个按钮：别让点击继续冒泡去加载文本内容
+        event.stopPropagation?.();
+        const browsePath = browse.getAttribute('data-browse-path');
+        if (browsePath !== null && browsePath.length > 0) {
+          void workspacePanel.openInBrowser(browsePath).then((opened) => {
+            if (opened) showPanel('browser');
+          });
+        }
+        return;
+      }
+
       const node = target instanceof Element ? target.closest('[data-file-path]') : null;
       if (node === null) return;
       const filePath = node.getAttribute('data-file-path');
@@ -1200,6 +1214,10 @@ function boot() {
     // 浏览器 / 文件页签时让上半区长大一些：一份 HTML 或一份文件挤在 150px 里是没法用的
     const zone = dom.panelBodies[0]?.closest('.zone');
     if (zone !== null && zone !== undefined) zone.setAttribute('data-active-panel', target);
+
+    // 切到浏览器页签时把当前文档再顶一次：隐藏期间写进去的 srcdoc 可能一直没加载，
+    // 显示出来会是一块空白（真机上踩过）
+    if (target === 'browser') browserPanel.repaint();
     // SPEC-021：打开文件页签时刷新列表（Agent 可能刚写了新文件）；
     // 列表只请求 /api/workspace，内容仍然要等人点开才加载。
     if (target === 'files') void workspacePanel.reload(activeConversation);

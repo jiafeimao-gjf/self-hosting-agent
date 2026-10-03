@@ -60,7 +60,7 @@ export interface ClientState {
   /** SPEC-015：当前生效的模型配置（Key 已打码） */
   model: PublicSettings;
   /** SPEC-019：内置浏览器的当前文档（已组合、可直接进 srcdoc）；没有则为 null */
-  browser: { version: number; title: string; html: string; allowNetwork: boolean } | null;
+  browser: { version: number; title: string; html: string; allowNetwork: boolean; path?: string } | null;
   /** SPEC-020：这个快照属于哪个对话 */
   conversation: { id: string; title: string };
   /** SPEC-023：待人类批准的动作（没有则 null）——刷新页面也要能看到 */
@@ -437,6 +437,7 @@ export class ClientSession {
               title: browserDoc.title,
               html: browserDoc.html,
               allowNetwork: browserDoc.allowNetwork,
+              ...(browserDoc.path === undefined ? {} : { path: browserDoc.path }),
             },
     };
   }
@@ -447,6 +448,50 @@ export class ClientSession {
    */
   conversation(): ContextItem[] {
     return projectConversation(this.runner.agentEvents('lead'));
+  }
+
+  /**
+   * SPEC-019：把工作空间里的一个 HTML 文件渲染进内置浏览器面板。
+   *
+   * 这是浏览器面板**唯一的入口**：Agent 不再有"往界面里塞 HTML"的工具，
+   * 它想让人看到什么就写成文件，人（或 `/browse`）决定打开哪个。
+   * 于是"浏览器能渲染什么"这件事重新回到了可审计、可留存的载体上——文件。
+   */
+  openInBrowser(pathInput: unknown): { ok: boolean; version?: number; path?: string; error?: string } {
+    const target = typeof pathInput === 'string' ? pathInput.trim() : '';
+    if (target === '') return { ok: false, error: 'BAD_PATH: 需要文件路径' };
+
+    const ext = target.toLowerCase();
+    if (!ext.endsWith('.html') && !ext.endsWith('.htm')) {
+      return { ok: false, error: 'NOT_HTML: 浏览器面板只渲染 .html / .htm 文件' };
+    }
+
+    const read = this.runner.workspace.read({ path: target });
+    if (!read.ok) return { ok: false, error: `${read.code}: ${read.reason}` };
+
+    const result = this.runner.browser.render({
+      html: read.content,
+      title: target,
+      path: read.path,
+    });
+    if (!result.ok) return { ok: false, error: `${result.code}: ${result.reason}` };
+
+    const doc = this.runner.browser.current();
+    if (doc !== undefined) {
+      this.logger.info('浏览器打开文件', { path: read.path, version: doc.version, truncated: read.truncated });
+      this.#emit({
+        type: 'browser',
+        data: {
+          version: doc.version,
+          title: doc.title,
+          html: doc.html,
+          allowNetwork: doc.allowNetwork,
+          path: doc.path,
+        },
+      });
+      this.#emit({ type: 'state', data: this.state() });
+    }
+    return { ok: true, version: result.version, path: read.path };
   }
 
   /**

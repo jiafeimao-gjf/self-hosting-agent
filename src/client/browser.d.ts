@@ -117,6 +117,8 @@ export interface BrowserPanelOptions {
 /** 浏览器面板控制器 */
 export interface BrowserPanel {
   /** 应用一份文档（SSE `browser` 事件 / 快照字段）；返回是否真的重画 */
+  /** 把当前文档重新写一遍（切到该页签时调用，治"隐藏期间写了但没加载"） */
+  repaint(): boolean;
   applyDocument(raw: unknown, flags?: { force?: boolean }): boolean;
   /** 应用 `/api/state`；没有 browser 字段 → false（保持现状） */
   applyState(raw: unknown): boolean;

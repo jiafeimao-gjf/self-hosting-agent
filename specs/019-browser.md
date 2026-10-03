@@ -8,7 +8,7 @@
 
 内置浏览器模块补上这两件事：
 
-1. **独立渲染任意 HTML**：不经过 View Spec 管线，Agent 直接给一份 HTML 文档；
+1. **独立渲染 HTML 文件**：不经过 View Spec 管线——渲染的是**工作空间里真实存在的 .html 文件**；
 2. **执行文档里的交互**：脚本真的跑，点击/提交/自定义事件经桥回传，能送到 Agent 手上让它反应。
 
 「独立」是关键字：它是**另一个**沙箱（浏览器面板），与界面面板并存，互不覆盖。
@@ -16,10 +16,12 @@
 ## 一、整体链路
 
 ```
-Agent ──host tool──▶ browser.render({html,…})
-                        │  BrowserHost 组合文档（注入桥 + 默认断网 CSP）
-                        ▼
-              SSE `browser` {version,title,html} ──▶ 客户端浏览器面板（沙箱 iframe）
+Agent ──workspace.write──▶ 工作空间里的 .html 文件      ← Agent 只能"写文件"
+                                    │  人点「在浏览器打开」/ `/browse`
+                                    ▼
+                        BrowserHost 组合文档（注入桥 + 默认断网 CSP）
+                                    ▼
+              SSE `browser` {version,title,html,path} ──▶ 客户端浏览器面板（沙箱 iframe）
                         ▲                                    │
                         │                             人类点按钮 / AgentClient.emit
                         │                                    ▼
@@ -66,11 +68,19 @@ Agent ──host tool──▶ browser.render({html,…})
 - **BROWSER-005** 桥入口校验：非对象 / `__ac` 缺失 / kind 不在白名单 / emit 缺 name / 超限，逐条拒绝并给出错误码。
 - **BROWSER-006** 声明式交互：桥脚本监听 click 与 submit，读取 `data-ac-emit` 与 `data-ac-payload` 后上报。
 - **BROWSER-007** 命令式交互与日志：桥暴露 `AgentClient.emit/log`，并转发 `console.log`、`window.onerror`、`unhandledrejection`。
-- **BROWSER-008** 宿主工具 `browser.render`：成功返回版本号；参数非法返回 `INVALID_ARGS`。
+- **BROWSER-008** 浏览器面板的入口是 `POST /api/browser/open {path}`：渲染工作空间里的 `.html`/`.htm`；
+  非 HTML（`NOT_HTML`）、不存在（`NOT_FOUND`）、越界（`PATH_ESCAPE`）、空路径（`BAD_PATH`）都被拒；
+  文档带上来源 `path` 与组合好的桥脚本；每打开一份就前进一个版本。
+- **BROWSER-013** **Agent 手里没有"往界面塞 HTML"的工具**：`browser.render` 已从工具表与子进程自述里移除，
+  浏览器面板的入口只剩"打开人指定的 HTML 文件"；渲染引擎、桥、沙箱能力一个都没少。
 - **BROWSER-009** 人类交互送达 Agent：`POST /api/browser/event` 校验后写进事件日志（`browser.event`），并以 `browser.event` 帧投递给 Lead；非法事件返回 400 且不落日志。
 - **BROWSER-010** 子进程收到 `browser.event` 帧后，把它作为一条**人类来源的消息**注入本轮上下文（Agent 能据此行动）。
 - **BROWSER-011** 客户端浏览器面板独立于界面面板：沙箱属性只含 `allow-scripts`；消息必须来自该 iframe 的 window；面板显示文档标题与版本。
 - **BROWSER-012** 端到端：脚本模型渲染 HTML → 人类点击 → 事件回传 → Agent 收到并回应下一轮。
+
+- **BROWSER-014** 写进沙箱的文档必须**真的画出来**：`srcdoc` 赋值后 iframe 有时加载了却不重绘
+  （属性对、`load` 也触发，画面一直空白），必须在**加载完成之后**让它消失一帧再回来把画面顶出来；
+  且顶帧不能早于加载（导航没起来就藏起来会把这次导航撤掉）。
 
 ## 非目标（本阶段不做）
 
