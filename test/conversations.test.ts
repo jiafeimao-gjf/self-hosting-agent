@@ -492,3 +492,45 @@ test('parseCommand 只认行首斜杠，其余当普通消息', () => {
 
 // 顺带：EventLog 在对话目录下的落点符合预期
 void EventLog;
+
+// @spec CLI-013
+test('清空边界必须分别作用于两份日志：宿主 seq 涨得快也不能吃掉子进程的回复', async () => {
+  const dir = tempDir('boundary');
+  const log = new EventLog({ dir: path.join(dir, 'events') });
+  const session = new ClientSession({
+    dir,
+    log,
+    lead: { script: [{ text: '答复一', done: true }, { text: '答复二', done: true }] },
+  });
+
+  const waitFor = async (text: string): Promise<void> => {
+    const deadline = Date.now() + 20000;
+    while (Date.now() < deadline) {
+      if (session.state().messages.some((item) => item.body.includes(text))) return;
+      await sleep(50);
+    }
+  };
+
+  try {
+    await session.send('第一问');
+    await waitFor('答复一');
+    assert.equal(session.state().messages.some((item) => item.body.includes('答复一')), true);
+
+    // 把宿主日志的 seq 推高：真模型下一轮会产生大量宿主事件，宿主号段远快于子进程
+    for (let i = 0; i < 80; i += 1) log.append({ type: 'noise', i });
+
+    session.clear();
+    await session.send('第二问');
+    await waitFor('答复二');
+
+    const messages = session.state().messages;
+    assert.equal(
+      messages.some((item) => item.body.includes('答复二')),
+      true,
+      `清空之后再来的回复必须还在（两份日志的 seq 是独立号段，不能用同一个边界过滤）：${JSON.stringify(messages.map((m) => m.body.slice(0, 12)))}`,
+    );
+    assert.equal(messages.some((item) => item.body.includes('答复一')), false, '清空前的回复该被清掉');
+  } finally {
+    await session.close();
+  }
+});

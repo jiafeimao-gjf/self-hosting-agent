@@ -47,6 +47,7 @@
 | **CLI-010** | specs/011-client.md | 服务端可以只监听 127.0.0.1（默认），不对外暴露。 | `test/server.test.ts` · 默认只监听 127.0.0.1，不对外暴露 |
 | **CLI-011** | specs/011-client.md | `POST /api/client/revert` 让人类**不必经过 Agent** 就能把被改过的客户端源码回滚（架构底线：人类永远能一键回滚）。 | `test/server.test.ts` · POST /api/client/revert 让人类不经过 Agent 就能回滚客户端源码 |
 | **CLI-012** | specs/011-client.md | `/api/state` 的 `messages` 是**完整对话投影**（人类消息 + Agent 说过的话，按时间归并）。前端会据此整体重建对话流，只投影邮件类消息会把 Agent 的回复冲掉。 | `test/server.test.ts` · 对话投影同时包含人类消息与 Agent 说过的话（只投影邮件会冲掉回复） |
+| **CLI-013** | specs/011-client.md | 清空边界必须**分别**作用于两份日志：宿主日志与子进程日志的 `seq` 是**独立号段**，拿宿主的边界去过滤子进程的 `agent.thinking` 会把回复整条吃掉（真 bug：流式输出结束后整条消息消失）。 | `test/conversations.test.ts` · 清空边界必须分别作用于两份日志：宿主 seq 涨得快也不能吃掉子进程的回复 |
 | **CMD-001** | specs/020-conversations.md | `/help` 列出全部命令，且每条命令都真的存在（表中没有幽灵命令）。 | `test/client-conversations-ui.test.ts` · /help 走命令通道，output 渲染成与人类 / Agent 消息不同款的系统消息<br>`test/conversations.test.ts` · /help 列出全部命令，且表里没有幽灵命令 |
 | **CMD-002** | specs/020-conversations.md | `/clear` 清空可见对话与上下文，但**不删磁盘上的历史**；清空后投影只剩清空之后的内容，Agent 下一轮也看不到清空前的对话。 | `test/conversations.test.ts` · /clear 清空显示与上下文，但磁盘上的历史一个字都不删 |
 | **CMD-003** | specs/020-conversations.md | `/history` 导出 Markdown 到 `history/` 目录，返回真实存在的路径与行数；`/history list` 能列出来。 | `test/conversations.test.ts` · /history 真的落盘，/history list 能列出来 |
@@ -270,7 +271,7 @@
 
 ## 统计
 
-- 验收标准：**263** 条
-- 已覆盖：**263** 条
+- 验收标准：**264** 条
+- 已覆盖：**264** 条
 - 未覆盖：**0** 条
 - 悬空引用／未标注用例：**0** 处

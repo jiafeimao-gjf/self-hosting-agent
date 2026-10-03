@@ -623,10 +623,17 @@ export class ClientSession {
    * 人类消息因为恰好在邮件日志里才活了下来。两边同源才是对的。
    */
   #conversationMessages(limit = 40): ClientState['messages'] {
-    const all = this.runner.log.read();
-    const boundary = clearBoundary(all);
-    const host = all
-      .filter((event) => event.type === 'mail.message' && event.seq > boundary)
+    const hostEvents = this.runner.log.read();
+    const childEvents = this.runner.agentEvents('lead');
+
+    // **两份日志的 seq 是两个独立号段**（各写各的文件），边界必须各算各的。
+    // 拿宿主日志的 seq 去过滤子进程的事件，会把回复整条吃掉——
+    // 而且越晚越容易踩到：宿主每轮产生的事件比子进程多，号段涨得更快。
+    const hostBoundary = clearBoundary(hostEvents);
+    const childBoundary = clearBoundary(childEvents);
+
+    const host = hostEvents
+      .filter((event) => event.type === 'mail.message' && event.seq > hostBoundary)
       .map((event) => ({
         from: String(event.from ?? ''),
         to: String(event.to ?? ''),
@@ -635,9 +642,8 @@ export class ClientSession {
         ts: event.ts,
       }));
 
-    const spoken = this.runner
-      .agentEvents('lead')
-      .filter((event) => event.type === 'agent.thinking' && event.seq > boundary)
+    const spoken = childEvents
+      .filter((event) => event.type === 'agent.thinking' && event.seq > childBoundary)
       .map((event) => ({
         from: 'lead',
         to: 'human',
