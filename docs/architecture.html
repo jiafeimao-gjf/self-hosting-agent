@@ -1,0 +1,882 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agent Client 架构 · Agent Loop / 工具调用与返回</title>
+<style>
+  :root {
+    --bg: #0b0d12;
+    --bg-soft: #12151d;
+    --card: #161a24;
+    --card-2: #1b2130;
+    --border: #262d3d;
+    --text: #e7ebf3;
+    --muted: #98a3ba;
+    --dim: #6c7891;
+    --cyan: #22d3ee;
+    --violet: #a78bfa;
+    --green: #34d399;
+    --amber: #fbbf24;
+    --rose: #fb7185;
+    --blue: #60a5fa;
+    --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+    --sans: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  }
+
+  * { box-sizing: border-box; }
+
+  html, body {
+    margin: 0;
+    padding: 0;
+    height: 100%;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 15px;
+    line-height: 1.6;
+  }
+
+  /* ── 左侧导航 ───────────────────────────────────────────── */
+  #nav {
+    position: fixed;
+    inset: 0 auto 0 0;
+    width: 216px;
+    padding: 26px 18px;
+    background: linear-gradient(180deg, #0e1119, #0b0d12);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    z-index: 10;
+  }
+
+  #nav .brand {
+    font-size: 13px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 2px;
+  }
+
+  #nav .brand-sub {
+    font-size: 11.5px;
+    color: var(--dim);
+    margin-bottom: 18px;
+    line-height: 1.45;
+  }
+
+  #nav a {
+    display: flex;
+    gap: 9px;
+    align-items: baseline;
+    padding: 7px 10px;
+    border-radius: 8px;
+    color: var(--muted);
+    text-decoration: none;
+    font-size: 13px;
+    border: 1px solid transparent;
+    transition: background 0.15s, color 0.15s, border-color 0.15s;
+  }
+
+  #nav a:hover { background: #171c28; color: var(--text); }
+
+  #nav a.active {
+    background: #141d28;
+    color: var(--text);
+    border-color: #1f3546;
+  }
+
+  #nav a i {
+    font-style: normal;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    min-width: 16px;
+  }
+
+  #nav a.active i { color: var(--cyan); }
+
+  #nav .foot {
+    margin-top: auto;
+    font-size: 11px;
+    color: var(--dim);
+    line-height: 1.5;
+    border-top: 1px solid var(--border);
+    padding-top: 12px;
+  }
+
+  /* ── 主区域：整屏分页 ───────────────────────────────────── */
+  #deck {
+    margin-left: 216px;
+    height: 100vh;
+    overflow-y: auto;
+    /* 用 proximity 而不是 mandatory：内容密的页面需要能自由往下读，
+       mandatory 会在你停手时把你拽回页首（长表格根本读不完） */
+    scroll-snap-type: y proximity;
+    scroll-behavior: smooth;
+  }
+
+  section.slide {
+    scroll-snap-align: start;
+    min-height: 100vh;
+    padding: 56px 54px 56px;
+    display: flex;
+    flex-direction: column;
+    /* 默认顶部对齐：内容超过一屏时不会把开头裁掉；只有开场页居中 */
+    justify-content: flex-start;
+    border-bottom: 1px solid #14181f;
+  }
+
+  section.slide.hero {
+    justify-content: center;
+  }
+
+  .kicker {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--cyan);
+    margin-bottom: 8px;
+  }
+
+  h1 { font-size: 40px; line-height: 1.18; margin: 0 0 10px; letter-spacing: -0.01em; }
+  h2 { font-size: 27px; margin: 0 0 6px; letter-spacing: -0.01em; }
+  h3 { font-size: 16px; margin: 0 0 8px; }
+  .lede { color: var(--muted); font-size: 15.5px; max-width: 900px; margin: 0 0 22px; }
+  .small { font-size: 12.5px; color: var(--dim); }
+
+  code, .mono { font-family: var(--mono); font-size: 12.5px; }
+  code { background: #0d1017; border: 1px solid var(--border); border-radius: 5px; padding: 1px 5px; color: #cfe6ff; }
+
+  /* ── 通用卡片 ───────────────────────────────────────────── */
+  .grid { display: grid; gap: 14px; }
+  .g2 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .g3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .g4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+
+  .card {
+    background: linear-gradient(180deg, var(--card), var(--card-2));
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 15px 17px;
+  }
+
+  .card h3 { display: flex; align-items: center; gap: 8px; }
+  .card p { margin: 0; color: var(--muted); font-size: 13px; }
+  .card.tight p { font-size: 12.5px; }
+
+  .tag {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 1px 7px;
+    border-radius: 999px;
+    border: 1px solid var(--border);
+    color: var(--muted);
+  }
+  .tag.cyan { color: var(--cyan); border-color: #1d4b57; background: #0d2229; }
+  .tag.violet { color: var(--violet); border-color: #3b2f63; background: #1a1530; }
+  .tag.green { color: var(--green); border-color: #1d4b3a; background: #0d2318; }
+  .tag.amber { color: var(--amber); border-color: #54431a; background: #241d0c; }
+  .tag.rose { color: var(--rose); border-color: #58222c; background: #240f13; }
+
+  /* ── 分层架构图 ─────────────────────────────────────────── */
+  .stack { display: flex; flex-direction: column; gap: 10px; }
+
+  .layer {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 13px 16px;
+    background: #12151d;
+    display: grid;
+    grid-template-columns: 132px 1fr;
+    gap: 16px;
+    align-items: center;
+  }
+
+  .layer .name { font-family: var(--mono); font-size: 13px; }
+  .layer .name small { display: block; color: var(--dim); font-size: 11px; font-family: var(--sans); }
+  .layer .desc { color: var(--muted); font-size: 13px; }
+  .layer .desc b { color: var(--text); font-weight: 600; }
+
+  .l-surface { border-left: 3px solid var(--cyan); }
+  .l-bridge { border-left: 3px solid var(--violet); }
+  .l-runtime { border-left: 3px solid var(--green); }
+  .l-kernel { border-left: 3px solid var(--amber); }
+
+  .axis {
+    display: flex;
+    justify-content: space-between;
+    font-size: 11.5px;
+    color: var(--dim);
+    padding: 0 4px;
+  }
+
+  /* ── 流程图（纯 CSS，不用外部库）────────────────────────── */
+  .flow { display: flex; align-items: stretch; gap: 0; flex-wrap: wrap; }
+
+  .node {
+    flex: 1 1 0;
+    min-width: 118px;
+    border: 1px solid var(--border);
+    background: #12161f;
+    border-radius: 10px;
+    padding: 11px 12px;
+    position: relative;
+  }
+
+  .node .n-k { font-family: var(--mono); font-size: 10.5px; color: var(--dim); letter-spacing: 0.08em; }
+  .node .n-t { font-size: 13.5px; margin-top: 3px; }
+  .node .n-d { font-size: 11.5px; color: var(--dim); margin-top: 4px; }
+  .node.hi { border-color: #1f4a5a; background: #0f1e26; }
+  .node.hi .n-k { color: var(--cyan); }
+  .node.warn { border-color: #543d14; background: #1e1808; }
+  .node.warn .n-k { color: var(--amber); }
+
+  .arrow {
+    flex: 0 0 34px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: var(--dim);
+    font-size: 15px;
+  }
+
+  /* ── 时序图（两列泳道）────────────────────────────────── */
+  .seq { border: 1px solid var(--border); border-radius: 12px; overflow: hidden; }
+  .seq-head { display: grid; grid-template-columns: 96px 1fr; background: #10141d; }
+  .seq-head div { padding: 9px 14px; font-size: 12px; color: var(--muted); border-right: 1px solid var(--border); }
+  .seq-head div:last-child { border-right: none; }
+
+  .seq-row { display: grid; grid-template-columns: 96px 1fr; border-top: 1px solid #1b202b; }
+  .seq-row .who {
+    padding: 10px 14px;
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--dim);
+    background: #0e121a;
+    border-right: 1px solid var(--border);
+  }
+  .seq-row .what { padding: 10px 14px; font-size: 13px; }
+  .seq-row .what code { font-size: 12px; }
+  .seq-row.dir-out .who { color: var(--violet); }
+  .seq-row.dir-in .who { color: var(--cyan); }
+  .seq-row.note .what { color: var(--muted); font-size: 12.5px; }
+
+  /* ── 帧协议表 ───────────────────────────────────────────── */
+  table { border-collapse: collapse; width: 100%; font-size: 12.5px; }
+  th, td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #1c212c; vertical-align: top; }
+  th { color: var(--dim); font-weight: 500; font-size: 11.5px; text-transform: uppercase; letter-spacing: 0.06em; }
+  td.mono { font-family: var(--mono); font-size: 12px; color: #cfe6ff; white-space: nowrap; }
+  tr:hover td { background: #12161f; }
+
+  .pill-in, .pill-out {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    padding: 1px 6px;
+    border-radius: 4px;
+    white-space: nowrap;
+  }
+  .pill-in { background: #0d2229; color: var(--cyan); }
+  .pill-out { background: #1a1530; color: var(--violet); }
+
+  ul.tight { margin: 0; padding-left: 18px; color: var(--muted); font-size: 13px; }
+  ul.tight li { margin: 3px 0; }
+  ul.tight b { color: var(--text); font-weight: 600; }
+
+  .rules { display: grid; gap: 10px; }
+  .rule {
+    display: grid;
+    grid-template-columns: 24px 1fr;
+    gap: 9px;
+    align-items: start;
+    border: 1px solid var(--border);
+    border-radius: 9px;
+    padding: 8px 12px;
+    background: #12151d;
+  }
+  .rule .n { font-family: var(--mono); color: var(--cyan); font-size: 12px; }
+  .rule p { margin: 0; color: var(--muted); font-size: 13px; }
+  .rule p b { color: var(--text); }
+
+  .banner {
+    border: 1px solid #1f4a5a;
+    background: linear-gradient(90deg, #0f1e26, #12151d);
+    border-radius: 12px;
+    padding: 13px 16px;
+    font-size: 13.5px;
+    color: #cfe6ff;
+  }
+
+  .stat { display: flex; gap: 26px; margin-top: 14px; flex-wrap: wrap; }
+  .stat div { font-size: 12px; color: var(--dim); }
+  .stat b { display: block; font-size: 20px; color: var(--text); font-family: var(--mono); }
+
+  @media (max-width: 1080px) {
+    #nav { width: 100%; height: auto; inset: 0 0 auto 0; flex-direction: row; flex-wrap: wrap; align-items: center; gap: 6px; padding: 10px; }
+    #nav .brand-sub, #nav .foot { display: none; }
+    #deck { margin-left: 0; padding-top: 54px; }
+    section.slide { padding: 30px 22px 40px; }
+    .g2, .g3, .g4 { grid-template-columns: 1fr; }
+  }
+</style>
+</head>
+<body>
+
+<nav id="nav">
+  <div class="brand">Agent Client</div>
+  <div class="brand-sub">自托管 Agent 客户端架构<br />架构即代码 · 规格 ⇄ 测试 1:1</div>
+  <a href="#s0"><i>00</i>一句话架构</a>
+  <a href="#s1"><i>01</i>四层与三条不变量</a>
+  <a href="#s2"><i>02</i>Agent Loop</a>
+  <a href="#s3"><i>03</i>工具调用与返回</a>
+  <a href="#s4"><i>04</i>帧协议与审批</a>
+  <a href="#s5"><i>05</i>事件日志即真相</a>
+  <a href="#s6"><i>06</i>客户端与沙箱</a>
+  <a href="#s7"><i>07</i>数据流全景</a>
+  <div class="foot">
+    <div>↑ ↓ / 空格 翻页</div>
+    <div id="progress">—</div>
+  </div>
+</nav>
+
+<main id="deck">
+
+  <!-- ═══════════ 00 ═══════════ -->
+  <section class="slide hero" id="s0">
+    <div class="kicker">00 · 一句话架构</div>
+    <h1>界面是输出，多 Agent 是内核，<br />一个 Agent 一个子进程。</h1>
+    <p class="lede">
+      客户端不是"聊天窗口 + 后端"。它是一台<b>能被 Agent 自己改造的交付终端</b>：界面由 Agent 输出的 View Spec 渲染，
+      浏览器面板渲染 Agent 写下的 HTML 文件，而 Agent 本身跑在独立子进程里——崩溃、超时、换模型都只影响那一个进程。
+    </p>
+
+    <div class="grid g3">
+      <div class="card">
+        <h3><span class="tag cyan">核心不变量</span></h3>
+        <p><b>界面 = f(事件日志)</b><br />界面不是状态，是投影。日志在，界面就能重建——重启、回放、换对话都成立。</p>
+      </div>
+      <div class="card">
+        <h3><span class="tag violet">核心不变量</span></h3>
+        <p><b>上下文 = f(事件日志)</b><br />Agent 的记忆不是内存里的数组，而是日志的投影：窗口可裁剪，事实不丢。</p>
+      </div>
+      <div class="card">
+        <h3><span class="tag green">核心不变量</span></h3>
+        <p><b>权限自上而下收敛</b><br />能力在 Kernel，编排在 Runtime，表达在 Surface。Agent 能画界面，但改不了沙箱规则。</p>
+      </div>
+    </div>
+
+    <div class="stat">
+      <div><b id="stat-1">285</b>条验收判据（全部有测试守着）</div>
+      <div><b id="stat-2">316</b>个测试</div>
+      <div><b>0</b>第三方运行时依赖</div>
+      <div><b>8</b>类 SSE 事件</div>
+      <div><b>15</b>个宿主工具（shell.run 条件注册）</div>
+      <div><b>18</b>种帧类型</div>
+    </div>
+  </section>
+
+  <!-- ═══════════ 01 ═══════════ -->
+  <section class="slide hero" id="s1">
+    <div class="kicker">01 · 分层</div>
+    <h2>四层：数据自下而上流动，权限自上而下收敛</h2>
+    <p class="lede">每一层只依赖它下面那层。越往下，越少改动、越不信任输入。</p>
+
+    <div class="stack">
+      <div class="layer l-surface">
+        <div class="name">Surface<small>src/surface · src/client</small></div>
+        <div class="desc">
+          <b>表达层。</b>View Spec → 校验闸门 → 界面文档 → 沙箱 iframe；Markdown、浏览器面板、文件面板都在这一层。
+          它决定"能画出什么"，但画不出沙箱外的任何东西。
+        </div>
+      </div>
+
+      <div class="layer l-bridge">
+        <div class="name">Bridge<small>src/protocol · src/loop</small></div>
+        <div class="desc">
+          <b>协议层。</b>NDJSON 帧 = 唯一协议真相（帧表派生校验器与方向判定）。Agent Loop 住在这里：
+          组装上下文 → 模型推理 → 工具分发 → 外发意图 → 检查点。
+        </div>
+      </div>
+
+      <div class="layer l-runtime">
+        <div class="name">Runtime<small>src/orchestrator · src/runtime</small></div>
+        <div class="desc">
+          <b>编排层。</b>拉起子进程、路由帧、代办宿主工具、任务板与邮箱、把子进程产出投影成事件。
+          它决定"谁能做什么"，也是人类与 Agent 相遇的地方。
+        </div>
+      </div>
+
+      <div class="layer l-kernel">
+        <div class="name">Kernel<small>src/kernel · src/eventlog</small></div>
+        <div class="desc">
+          <b>内核层。</b>事件日志（唯一事实来源）、工作空间路径守卫、shell 执行器（进程组/白名单/上限）、
+          审批门。这一层不解释业务，只提供受约束的能力。
+        </div>
+      </div>
+    </div>
+
+    <div class="axis" style="margin-top:12px">
+      <span>↑ 数据自下而上：事实 → 投影 → 界面</span>
+      <span>权限自上而下：能力收敛在内核 ↓</span>
+    </div>
+  </section>
+
+  <!-- ═══════════ 02 ═══════════ -->
+  <section class="slide" id="s2">
+    <div class="kicker">02 · 内核循环</div>
+    <h2>Agent Loop：一轮 = 五步，外加四道预算闸门</h2>
+    <p class="lede">
+      循环住在<b>子进程</b>里（<code>src/loop/loop.ts</code>）。它只跟两样东西打交道：模型端口与工具表。
+      所有对外的副作用都必须走帧——它没有别的出口。
+    </p>
+
+    <div class="flow" style="margin-bottom:16px">
+      <div class="node hi">
+        <div class="n-k">STEP 1 · assemble</div>
+        <div class="n-t">组装上下文</div>
+        <div class="n-d">只在步边界消费收件箱；裁剪历史窗口</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node hi">
+        <div class="n-k">STEP 2 · infer</div>
+        <div class="n-t">模型推理</div>
+        <div class="n-d">流式增量外发（累积全文，幂等）</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node hi">
+        <div class="n-k">STEP 3 · dispatch</div>
+        <div class="n-t">工具分发</div>
+        <div class="n-d">本地执行或请宿主代办；失败不致命</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node hi">
+        <div class="n-k">STEP 4 · emit</div>
+        <div class="n-t">外发界面意图</div>
+        <div class="n-d">ui.patch 必须过守卫，被拒也留痕</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node hi">
+        <div class="n-k">STEP 5 · checkpoint</div>
+        <div class="n-t">检查点</div>
+        <div class="n-d">记账，然后回到闸门判断是否再来一轮</div>
+      </div>
+    </div>
+
+    <div class="grid g2">
+      <div class="card">
+        <h3>四道预算闸门（每轮开始前判）</h3>
+        <ul class="tight">
+          <li><b>maxTurns</b> · 轮数上限</li>
+          <li><b>maxToolCalls</b> · 工具调用总数上限</li>
+          <li><b>maxTokens</b> · 累计 token 上限</li>
+          <li><b>maxWallClockMs</b> · 墙钟时限</li>
+          <li>命中任一 → <code>budget_exhausted</code> 收工并留痕</li>
+          <li>人类打断 → <code>interrupted</code>（下一轮起点生效，不硬杀）</li>
+        </ul>
+      </div>
+
+      <div class="card">
+        <h3>为什么子进程</h3>
+        <ul class="tight">
+          <li><b>崩溃隔离</b>：模型端口抛错、工具卡死只毁这一个进程，宿主照常服务</li>
+          <li><b>换模型＝换进程</b>：设置一改就回收重建，历史由日志投影而来，不丢</li>
+          <li><b>强边界</b>：子进程拿不到宿主的对象，只能发帧——"能做"与"被允许做"是两回事</li>
+          <li><b>可审计</b>：每个进程有独立日志目录，出问题能单独复现</li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="banner" style="margin-top:14px">
+      <b>流式输出</b>：<code>agent.delta</code> 发的是<b>累积全文</b>而不是分片——重复投递不产生副作用。
+      它是瞬态提示，会被最终的 <code>agent.thinking</code> 取代，因此<b>不进事件日志</b>：一条一条记账只会把日志淹没。
+    </div>
+  </section>
+
+  <!-- ═══════════ 03 ═══════════ -->
+  <section class="slide" id="s3">
+    <div class="kicker">03 · 本页重点</div>
+    <h2>工具调用与返回：两类工具，一条回填链</h2>
+    <p class="lede">
+      模型只会说"我要调 <code>workspace.write</code>"。能不能调、谁来调、要不要人类点头，全由宿主决定。
+      子进程里的 Loop <b>没有直接能力</b>，它只有一根"请宿主代办"的桥。
+    </p>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card tight">
+        <h3><span class="tag violet">类型 A</span>进程内工具（execute: local）</h3>
+        <p>在 Loop 自己的进程里执行：纯计算、读收件箱、写任务板。<b>同步返回</b>，几十毫秒级。</p>
+      </div>
+      <div class="card tight">
+        <h3><span class="tag cyan">类型 B</span>宿主工具（execute: host）</h3>
+        <p>Loop 干不了的事：拉子进程、改客户端源码、写工作空间、执行 shell。<b>经帧往返宿主</b>，可能阻塞、可能被拒、可能超时。</p>
+      </div>
+    </div>
+
+    <div class="seq">
+      <div class="seq-head">
+        <div>位置</div>
+        <div>发生什么</div>
+      </div>
+      <div class="seq-row dir-in">
+        <div class="who">宿主 → 子</div>
+        <div class="what"><code>human.message</code> 到达 → Loop 在<b>步边界</b>取出，记一条 <code>message.received</code></div>
+      </div>
+      <div class="seq-row dir-out">
+        <div class="who">子 内部</div>
+        <div class="what">模型返回 <code>toolCalls: [{ id, name: "workspace.write", args }]</code>，助手消息连同调用一起进上下文（结果才有归属）</div>
+      </div>
+      <div class="seq-row dir-out">
+        <div class="who">子 → 宿主</div>
+        <div class="what">
+          <code>tool.call</code> 帧发出（<code>{t,agent,seq,ts,id,name,args}</code>），同时记 <code>tool.call</code> 事件；
+          随后 <code>hostBridge.awaitToolReply(callId, {timeoutMs})</code> 挂起 —— 会等，但不会永远等
+        </div>
+      </div>
+      <div class="seq-row dir-in">
+        <div class="who">宿主</div>
+        <div class="what">
+          <code>#isHostTool</code> 判定 → <code>#runHostTool</code>：记 <code>host.tool.call</code> → 执行 → 记 <code>host.tool.result</code>；
+          敏感动作（如 <code>shell.run</code>）先过<b>审批门</b>：SSE <code>approval</code> → 人类点「允许一次 / 拒绝」→ 没人在场立即拒绝
+        </div>
+      </div>
+      <div class="seq-row dir-in">
+        <div class="who">宿主 → 子</div>
+        <div class="what"><code>tool.reply</code> 帧回填（<code>{id, ok, result|error}</code>）→ 桥 resolve，Loop 继续</div>
+      </div>
+      <div class="seq-row dir-out">
+        <div class="who">子 内部</div>
+        <div class="what">
+          结果写进上下文 <code>{role:'tool', text:'[workspace.write] {"path":…}'}</code>，并记 <code>tool.result</code>；
+          下一轮推理让模型看到它 —— 直到 <code>loop.done</code>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:14px">
+      <div class="card tight">
+        <h3>失败不致命</h3>
+        <p>工具不存在 → <code>UNKNOWN_TOOL</code>；宿主超时 → <code>HOST_TOOL_TIMEOUT</code>；
+        被拒 → <code>审批被拒绝</code>。<b>这些都作为文本结果回到模型</b>，让它自己决定下一步——而不是把整轮打断。</p>
+      </div>
+      <div class="card tight">
+        <h3>只声明真的注册了的</h3>
+        <p>宿主工具表是唯一事实：没注册的工具<b>不会出现在给模型的工具清单里</b>。
+        曾经有个 bug 是把常量表整个声明给子进程，模型于是去调一个不存在的工具，只拿到 <code>UNKNOWN_TOOL</code>。</p>
+      </div>
+      <div class="card tight">
+        <h3>名字的两个空间</h3>
+        <p>内部工具名允许带点（<code>ui.render</code>），但 OpenAI 的 <code>tools[0].function.name</code> 只接受
+        <code>^[a-zA-Z0-9_-]+$</code>。适配器负责<b>外发时净化、回收时映射回来</b>，内部名字不变。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ 04 ═══════════ -->
+  <section class="slide" id="s4">
+    <div class="kicker">04 · 协议</div>
+    <h2>帧协议与审批门</h2>
+    <p class="lede">
+      <code>src/protocol/frames.ts</code> 是唯一的帧表：JSON Schema、校验器、方向判定都由它派生——
+      所以"规格说能过"和"实现真能过"不可能各说各话。
+    </p>
+
+    <div class="grid g2">
+      <div>
+        <h3 style="margin-bottom:10px">帧（节选）</h3>
+        <table>
+          <thead><tr><th>帧</th><th>方向</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">human.message</td><td><span class="pill-in">in</span></td><td>人类说话</td></tr>
+            <tr><td class="mono">peer.message</td><td><span class="pill-in">in</span></td><td>Agent 之间：brief / report / note</td></tr>
+            <tr><td class="mono">tool.reply</td><td><span class="pill-in">in</span></td><td><b>宿主回填工具结果</b></td></tr>
+            <tr><td class="mono">approval.reply · interrupt</td><td><span class="pill-in">in</span></td><td>人类批准 / 拒绝 · 人类夺权</td></tr>
+            <tr><td class="mono">tool.call</td><td><span class="pill-out">out</span></td><td><b>请求宿主代办</b></td></tr>
+            <tr><td class="mono">tool.result</td><td><span class="pill-out">out</span></td><td>工具结果（已进上下文）</td></tr>
+            <tr><td class="mono">agent.delta · agent.thinking</td><td><span class="pill-out">out</span></td><td>流式累积全文（瞬态，不落日志）· 这一步说的话（落日志）</td></tr>
+            <tr><td class="mono">ui.patch</td><td><span class="pill-out">out</span></td><td>界面意图（必须过守卫）</td></tr>
+            <tr><td class="mono">approval.ask</td><td><span class="pill-out">out</span></td><td>请求人类批准</td></tr>
+            <tr><td class="mono">loop.step / state / done / error</td><td><span class="pill-out">out</span></td><td>循环自身的可观察信号</td></tr>
+          </tbody>
+        </table>
+        <p class="small" style="margin-top:8px">
+          完整 18 种见 <code>src/protocol/frames.ts</code>；信封四件套 <code>t · agent · seq · ts</code>，
+          严格校验：未知字段与类型不符一律拒收。
+        </p>
+      </div>
+
+      <div>
+        <h3 style="margin-bottom:10px">审批门：不给"安全的 shell"，给"被看着的 shell"</h3>
+        <div class="rules">
+          <div class="rule"><div class="n">01</div><p><b>默认不存在。</b>不加 <code>--allow-shell</code>，<code>shell.run</code> 根本不注册——模型看不到这个工具，没有"试一试"的机会。</p></div>
+          <div class="rule"><div class="n">02</div><p><b>每条都要人批。</b>启用后每次调用都弹对话框，把完整命令原文摆在人面前；「人类在场即放行」这条策略对 shell 无效。</p></div>
+          <div class="rule"><div class="n">03</div><p><b>没人在就是拒绝。</b>没有客户端连着 → 立即 <code>deny</code>（fail closed），不挂住；等人有上限（默认 10 分钟），超时按拒绝。</p></div>
+          <div class="rule"><div class="n">04</div><p><b>环境变量白名单。</b>只传 <code>PATH/HOME/LANG/TERM/TMPDIR</code> 等，<code>AGENT_API_KEY</code> 绝不进 shell——否则 <code>env</code> 一条命令就把 Key 打出来了。</p></div>
+          <div class="rule"><div class="n">05</div><p><b>进程治理。</b>独立进程组 + 超时 <code>kill(-pid)</code>：<code>sleep 100 &amp;</code> 这类后台子进程随整棵树一起回收。</p></div>
+          <div class="rule"><div class="n">06</div><p><b>审计含拒绝。</b>每次调用都写事件日志：命令、决定、退出码、耗时、是否截断。被拒绝的也留痕。</p></div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ 05 ═══════════ -->
+  <section class="slide" id="s5">
+    <div class="kicker">05 · 事实来源</div>
+    <h2>事件日志即真相</h2>
+    <p class="lede">
+      内存里的东西会丢，日志不会。凡是"要能重建"的状态，就必须先成为日志里的一条事实——这条规矩
+      在开发过程中反复救场：它同时给出了持久化、回放、审计与排障四种能力。
+    </p>
+
+    <div class="grid g2" style="margin-bottom:14px">
+      <div class="card">
+        <h3>从"传输记录"到"事实记录"</h3>
+        <p>
+          界面的改动原本只存在于 <code>agent.frame</code> 里——那是<b>传输记录</b>，不是事实。
+          于是"界面 = f(事件日志)"对界面自己不成立：重启必丢。<br /><br />
+          修法不是新写一套存储，而是让 <code>SurfaceIngest</code> 在改动成功时写一条
+          <code>ui.patch</code> 事件，启动时按序回放——<b>已有不变量覆盖了新需求</b>。
+        </p>
+      </div>
+      <div class="card">
+        <h3>回放必须幂等</h3>
+        <ul class="tight">
+          <li>回放<b>不再写事件</b>（<code>silent</code>），否则每重启一次日志滚一倍</li>
+          <li>回放产出的版本序列与重启前<b>完全一致</b>——回滚也照样执行一次</li>
+          <li>被拒绝的改动<b>不记</b>：它没改任何东西，记了只会让回放重复走一遍拒绝路径</li>
+          <li>两套日志各有各的号段：<b>绝不拿一份日志的 seq 去过滤另一份</b></li>
+        </ul>
+      </div>
+    </div>
+
+    <div class="flow">
+      <div class="node">
+        <div class="n-k">事实</div>
+        <div class="n-t">events.jsonl</div>
+        <div class="n-d">宿主一份、每个 Agent 一份；顺序即因果</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-k">投影</div>
+        <div class="n-t">对话 / 界面 / 上下文</div>
+        <div class="n-d">边界（/clear、窗口）只影响投影，不改事实</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-k">传输</div>
+        <div class="n-t">SSE</div>
+        <div class="n-d">state · frame · document · done · settings · browser · approval · client.changed</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node hi">
+        <div class="n-k">呈现</div>
+        <div class="n-t">沙箱 iframe</div>
+        <div class="n-d">界面 / 浏览器 / 文件三个面板并存，互不覆盖</div>
+      </div>
+    </div>
+
+    <div class="banner" style="margin-top:14px">
+      <b>一条真 bug 的教训</b>：清空对话的边界取自宿主日志的 <code>seq</code>，却被拿去过滤子进程日志的事件——
+      两个文件、两套独立号段。小场景里两边号段接近，侥幸正确；真模型跑一会儿，宿主号段涨得更快，
+      <b>整条回复被过滤掉</b>。症状是"流式输出完了，整条消息消失"。
+    </div>
+  </section>
+
+  <!-- ═══════════ 06 ═══════════ -->
+  <section class="slide" id="s6">
+    <div class="kicker">06 · 客户端</div>
+    <h2>客户端：能被 Agent 自己改造的界面</h2>
+    <p class="lede">
+      Agent 可以改客户端的源码（<code>client.write</code>），但必须过自检门禁；
+      人类永远有 <code>client.revert</code> 一键回滚。界面本身也走"沙箱 + 投影"这套。
+    </p>
+
+    <div class="grid g3">
+      <div class="card tight">
+        <h3>三个面板，三个沙箱</h3>
+        <p><code>&lt;iframe sandbox="allow-scripts"&gt;</code>（故意不给 <code>allow-same-origin</code>）。
+        界面面板画 View Spec；浏览器面板渲染工作空间里的 <code>.html</code> 文件；文件面板按需加载内容。</p>
+      </div>
+      <div class="card tight">
+        <h3>Markdown 渲染</h3>
+        <p>零依赖自写渲染器，<b>先转义再产出 HTML</b>，链接走协议白名单（<code>javascript:</code> 降级成纯文本）。
+        只有 Agent 的输出渲染——人类输入保持纯文本，这条边界要明确。</p>
+      </div>
+      <div class="card tight">
+        <h3>模型配置两层</h3>
+        <p>全局默认（<code>global-settings.json</code>）+ 对话覆盖。输入框旁的切换器<b>本轮结束才可切</b>——
+        换模型要重启 Agent，界面禁用是提示，服务端拒绝才是不变量。</p>
+      </div>
+      <div class="card tight">
+        <h3>自举闭环</h3>
+        <p>Agent 改 <code>.css</code> → 无刷新热替换；改 <code>.js</code>/<code>.html</code> → 只给横幅 +
+        必须由人点的刷新按钮（不自动刷新，免得打断正在进行的对话）。</p>
+      </div>
+      <div class="card tight">
+        <h3>审批对话框</h3>
+        <p>SSE <code>approval</code> → 展示完整命令原文与风险等级 → 三个按钮。<b>必须人工点击</b>：
+        没有默认同意、没有回车同意、没有超时同意，初始焦点在「拒绝」上。</p>
+      </div>
+      <div class="card tight">
+        <h3>界面版本列表</h3>
+        <p>每一版都有时间戳与区块数，点一下回到那一版。回滚也是一次变更、也写日志——
+        否则"回滚 → 重启 → 回滚失效"。</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ═══════════ 07 ═══════════ -->
+  <section class="slide" id="s7">
+    <div class="kicker">07 · 全景</div>
+    <h2>一次完整往返：从人类打字到界面改变</h2>
+
+    <div class="flow" style="margin-bottom:12px">
+      <div class="node hi">
+        <div class="n-k">人</div>
+        <div class="n-t">输入一句话</div>
+        <div class="n-d">或 <code>/</code> 开头的命令</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-k">Session</div>
+        <div class="n-t">投递 + 置忙</div>
+        <div class="n-d">写 <code>mail.message</code>，SSE 广播状态</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-k">Team</div>
+        <div class="n-t">帧进子进程</div>
+        <div class="n-d">NDJSON over stdio</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node hi">
+        <div class="n-k">Loop</div>
+        <div class="n-t">五步一轮</div>
+        <div class="n-d">infer → dispatch → …</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-k">Model</div>
+        <div class="n-t">协议适配</div>
+        <div class="n-d">OpenAI / Anthropic，含流式与降级</div>
+      </div>
+    </div>
+
+    <div class="flow" style="margin-bottom:12px">
+      <div class="node warn">
+        <div class="n-k">工具</div>
+        <div class="n-t">本地 或 宿主</div>
+        <div class="n-d">宿主工具经帧往返；敏感动作过审批门</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-k">日志</div>
+        <div class="n-t">事实落盘</div>
+        <div class="n-d">tool.call/result · agent.thinking · ui.patch</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-k">投影</div>
+        <div class="n-t">文档 / 对话</div>
+        <div class="n-d">界面文档前进一版</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node hi">
+        <div class="n-k">SSE</div>
+        <div class="n-t">document + state</div>
+        <div class="n-d">增量帧也同时外发</div>
+      </div>
+      <div class="arrow">→</div>
+      <div class="node">
+        <div class="n-k">客户端</div>
+        <div class="n-t">重画</div>
+        <div class="n-d">只更新 srcdoc，宿主页面绝不刷新</div>
+      </div>
+    </div>
+
+    <div class="grid g3" style="margin-top:6px">
+      <div class="card">
+        <h3>可观察性</h3>
+        <ul class="tight">
+          <li>事件日志：领域事实（谁要求了什么、成了没有）</li>
+          <li>诊断日志：排障细节（分级、可回显到终端）</li>
+          <li>时间线：人类可读的事件摘要</li>
+          <li>Agent 进程表：pid / 存活</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>失败的处理方式</h3>
+        <ul class="tight">
+          <li>模型报错 → 记 <code>loop.error</code>，本轮以 <code>error</code> 收工，进程不死</li>
+          <li>工具报错 → 作为文本回到模型，由它决定下一步</li>
+          <li>审批超时 → 按拒绝处理，并留痕</li>
+          <li>沙箱不认流式 → 自动降级为非流式重发</li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3>这套架构的代价</h3>
+        <ul class="tight">
+          <li>帧协议要严格：字段改动必须同步帧表与规格</li>
+          <li>子进程多一层调试成本（所以有独立日志目录）</li>
+          <li>投影要盯"最终产物"：属性对了不等于画面出来了</li>
+          <li>零依赖意味着轮子得自己造（Markdown、SSE 解析、门禁）</li>
+        </ul>
+      </div>
+    </div>
+
+    <p class="small" style="margin-top:16px">
+      本文档由开发过程沉淀：每条不变量背后都有对应的验收判据与测试（<code>npm run check</code> 会同时跑
+      规格追溯门禁与全部测试）。判据数、测试数随代码一起更新。
+    </p>
+  </section>
+
+</main>
+
+<script>
+  // 纯前端：翻页、导航高亮、进度。没有任何外部依赖。
+  const deck = document.getElementById('deck');
+  const links = Array.from(document.querySelectorAll('#nav a'));
+  const slides = Array.from(document.querySelectorAll('section.slide'));
+  const progress = document.getElementById('progress');
+
+  function currentIndex() {
+    let best = 0;
+    let bestDistance = Infinity;
+    slides.forEach((slide, index) => {
+      const distance = Math.abs(slide.getBoundingClientRect().top);
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        best = index;
+      }
+    });
+    return best;
+  }
+
+  function syncNav() {
+    const index = currentIndex();
+    links.forEach((link, i) => link.classList.toggle('active', i === index));
+    if (progress) progress.textContent = `第 ${index + 1} / ${slides.length} 页`;
+  }
+
+  deck.addEventListener('scroll', () => window.requestAnimationFrame(syncNav), { passive: true });
+
+  // 键盘翻页：方向键 / 空格 / PageUp·Down
+  document.addEventListener('keydown', (event) => {
+    const tag = (event.target && event.target.tagName) || '';
+    if (tag === 'INPUT' || tag === 'TEXTAREA') return;
+    let delta = 0;
+    if (event.key === 'ArrowDown' || event.key === 'PageDown' || event.key === ' ') delta = 1;
+    else if (event.key === 'ArrowUp' || event.key === 'PageUp') delta = -1;
+    else return;
+    event.preventDefault();
+    const index = Math.min(slides.length - 1, Math.max(0, currentIndex() + delta));
+    slides[index].scrollIntoView({ behavior: 'smooth', block: 'start' });
+  });
+
+  syncNav();
+</script>
+
+</body>
+</html>

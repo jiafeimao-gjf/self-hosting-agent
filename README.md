@@ -57,6 +57,11 @@ npm run serve -- --allow-shell --approval-timeout 1800000   # 审批等待上限
 真机实测（本机 Ollama）：模型调 `shell.run {command:"ls"}` → 对话框弹出完整命令 → 点「允许一次」
 → 命令在工作空间执行（退出码 0）→ 结果回给模型 → 模型据此作答。
 
+## 架构文档（一份自包含的 HTML）
+
+**[docs/architecture.html](docs/architecture.html)** —— 整体架构、Agent Loop 的五步循环、
+以及工具调用与返回的完整时序（含帧协议与审批门）。零依赖单文件，双击即看，也可当幻灯片翻页（↑↓ / 空格）。
+
 ## 模型配置：全局默认 + 对话内切换
 
 模型配置分**两层**，一层管默认，一层管当下：
